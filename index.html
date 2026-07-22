@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MisFinanzas</title>
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#0a0a0f">
+    <link rel="icon" type="image/svg+xml" href="icon.svg">
+    <link rel="stylesheet" href="styles.css?v=21">
+</head>
+<body>
+    <div id="app">
+        <header>
+            <div class="logo">
+                <svg width="32" height="32" viewBox="0 0 32 32"><rect width="32" height="32" rx="6" fill="#FFD700"/><text x="16" y="22" text-anchor="middle" font-size="18" font-weight="bold" fill="#0a0a0f">$</text></svg>
+                <h1>MisFinanzas</h1>
+            </div>
+            <nav>
+                <button class="nav-btn active" data-view="dashboard">Dashboard</button>
+                <button class="nav-btn" data-view="transactions">Movimientos</button>
+                <button class="nav-btn" data-view="compare">Comparar</button>
+                <button class="nav-btn" data-view="stats">Estadísticas</button>
+                <button class="nav-btn" data-view="accounts">Cuentas</button>
+                <button class="nav-btn" data-view="upload">Extractos</button>
+            </nav>
+        </header>
+
+        <main>
+            <!-- DASHBOARD VIEW -->
+            <section id="view-dashboard" class="view active">
+                <div class="filters-bar">
+                    <select id="filter-year"></select>
+                    <select id="filter-month"></select>
+                </div>
+
+                <div class="summary-cards">
+                    <div class="card card-income">
+                        <span class="card-label">Ingresos</span>
+                        <span class="card-value" id="total-income">0,00 €</span>
+                        <span class="card-sub" id="income-bizum"></span>
+                    </div>
+                    <div class="card card-expense">
+                        <span class="card-label">Gastos</span>
+                        <span class="card-value" id="total-expense">0,00 €</span>
+                        <span class="card-sub" id="expense-bizum"></span>
+                    </div>
+                    <div class="card card-balance">
+                        <span class="card-label">Balance</span>
+                        <span class="card-value" id="total-balance">0,00 €</span>
+                        <span class="card-sub" id="balance-bizum"></span>
+                    </div>
+                    <div class="card card-savings">
+                        <span class="card-label">Ahorro</span>
+                        <span class="card-value" id="total-savings">0,00 €</span>
+                    </div>
+                </div>
+
+                <div class="charts-grid">
+                    <div class="chart-container">
+                        <h3>Gastos por categoría</h3>
+                        <canvas id="chart-donut"></canvas>
+                    </div>
+                    <div class="chart-container">
+                        <h3>Top gastos</h3>
+                        <canvas id="chart-horizontal-bars"></canvas>
+                        <div id="bars-hidden-chips" class="bars-hidden-chips"></div>
+                    </div>
+                    <div class="chart-container chart-wide">
+                        <h3>Comparativa mensual</h3>
+                        <canvas id="chart-monthly"></canvas>
+                    </div>
+                </div>
+            </section>
+
+            <!-- TRANSACTIONS VIEW -->
+            <section id="view-transactions" class="view">
+                <div class="filters-bar">
+                    <select id="tx-filter-year"></select>
+                    <select id="tx-filter-month"></select>
+                    <select id="tx-filter-category">
+                        <option value="all">Todas las categorías</option>
+                    </select>
+                    <input type="text" id="tx-search" placeholder="Buscar movimiento...">
+                </div>
+                <div id="transactions-list" class="transactions-list"></div>
+            </section>
+
+            <!-- COMPARE VIEW -->
+            <section id="view-compare" class="view">
+                <div class="compare-header">
+                    <h2>Comparativa</h2>
+                    <p class="compare-hint">Compara dos periodos: año vs año, o el mismo mes en distintos años.</p>
+                </div>
+                <div class="compare-selectors">
+                    <div class="compare-period compare-period-a">
+                        <span class="period-tag">Periodo A</span>
+                        <select id="cmp-a-year"></select>
+                        <select id="cmp-a-month"></select>
+                    </div>
+                    <span class="compare-vs">VS</span>
+                    <div class="compare-period compare-period-b">
+                        <span class="period-tag">Periodo B</span>
+                        <select id="cmp-b-year"></select>
+                        <select id="cmp-b-month"></select>
+                    </div>
+                </div>
+
+                <div id="compare-summary" class="compare-summary"></div>
+
+                <div class="chart-container chart-wide">
+                    <h3>Gastos por categoría</h3>
+                    <canvas id="chart-comparison"></canvas>
+                </div>
+            </section>
+
+            <!-- STATS VIEW -->
+            <section id="view-stats" class="view">
+                <div class="compare-header">
+                    <h2>Estadísticas</h2>
+                    <p class="compare-hint">Elige una categoría para ver sus promedios, máximos y evolución. Con "Todas" verás tu capacidad de ahorro.</p>
+                </div>
+                <div class="filters-bar">
+                    <select id="stats-year"></select>
+                    <select id="stats-category"></select>
+                </div>
+
+                <div id="stats-summary"></div>
+
+                <div class="chart-container chart-wide">
+                    <h3 id="stats-chart-title">Evolución mensual</h3>
+                    <canvas id="chart-stats"></canvas>
+                </div>
+            </section>
+
+            <!-- ACCOUNTS VIEW -->
+            <section id="view-accounts" class="view">
+                <div class="networth-banner">
+                    <div class="networth-main">
+                        <span class="networth-label">Patrimonio total</span>
+                        <span class="networth-value" id="networth-total">0,00 €</span>
+                    </div>
+                    <div class="networth-breakdown" id="networth-breakdown"></div>
+                </div>
+                <div class="accounts-grid">
+                    <div class="account-card">
+                        <h3>Cuenta corriente</h3>
+                        <p class="account-number" id="sabadell-account"></p>
+                        <p class="account-balance" id="sabadell-balance">0,00 €</p>
+                    </div>
+                    <div class="account-card">
+                        <h3>Cuenta Ahorro</h3>
+                        <p class="account-detail">Ahorro Sabadell</p>
+                        <p class="account-balance" id="savings-balance">3.501,81 €</p>
+                        <div class="savings-edit">
+                            <label>Actualizar saldo:</label>
+                            <input type="number" id="savings-input" step="0.01" placeholder="Nuevo saldo">
+                            <button id="savings-update-btn" class="btn-primary">Actualizar</button>
+                        </div>
+                    </div>
+                    <div class="account-card">
+                        <h3>Trade Republic</h3>
+                        <p class="account-detail">Cuenta remunerada</p>
+                        <p class="account-balance" id="traderepublic-balance">0,00 €</p>
+                        <div class="savings-edit">
+                            <label>Actualizar saldo:</label>
+                            <input type="number" id="traderepublic-input" step="0.01" placeholder="Nuevo saldo">
+                            <button id="traderepublic-update-btn" class="btn-primary">Actualizar</button>
+                        </div>
+                    </div>
+                    <div class="account-card account-card-wide">
+                        <h3>MyInvestor</h3>
+                        <p class="account-balance" id="myinvestor-balance">0,00 €</p>
+                        <p class="account-detail" id="myinvestor-breakdown"></p>
+
+                        <div class="myinvestor-summary" id="myinvestor-summary"></div>
+
+                        <div class="mi-cash-edit">
+                            <label>Efectivo parado (sin invertir):</label>
+                            <input type="number" id="myinvestor-cash-input" step="0.01" placeholder="0,00">
+                            <button id="myinvestor-cash-btn" class="btn-primary">Guardar</button>
+                        </div>
+
+                        <h4 class="funds-title">Fondos indexados</h4>
+                        <div id="funds-list" class="funds-list"></div>
+
+                        <div class="fund-add">
+                            <h4>Añadir / actualizar fondo</h4>
+                            <div class="fund-add-row">
+                                <input type="text" id="fund-add-name" placeholder="Nombre del fondo">
+                                <input type="number" id="fund-add-invested" step="0.01" placeholder="Invertido €">
+                                <input type="number" id="fund-add-current" step="0.01" placeholder="Valor actual €">
+                                <button id="fund-add-btn" class="btn-primary">Guardar fondo</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- UPLOAD VIEW -->
+            <section id="view-upload" class="view">
+                <div class="folder-import-section">
+                    <div class="folder-header">
+                        <div>
+                            <h2>Carpeta de extractos</h2>
+                            <p class="folder-path">Deja tus archivos .xls/.xlsx en la carpeta <code>extractos/</code></p>
+                        </div>
+                        <button id="btn-scan-folder" class="btn-primary btn-large">Actualizar</button>
+                    </div>
+                    <div id="folder-status" class="folder-status"></div>
+                    <div id="folder-files" class="folder-files"></div>
+                </div>
+
+                <hr class="divider">
+
+                <div class="manual-upload-section">
+                    <h3>O sube un archivo manualmente</h3>
+                    <div class="upload-zone" id="upload-zone">
+                        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#FFD700" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                        <p>Arrastra tu extracto aquí o haz clic para seleccionar</p>
+                        <p class="upload-hint">Formatos: .xls, .xlsx</p>
+                        <input type="file" id="file-input" accept=".xls,.xlsx,.csv" multiple hidden>
+                    </div>
+                </div>
+
+                <div id="upload-preview" class="upload-preview" hidden>
+                    <h3>Vista previa de importación</h3>
+                    <div id="upload-stats"></div>
+                    <div id="duplicate-warning" hidden>
+                        <p class="warning-text">Se han detectado movimientos duplicados que serán ignorados</p>
+                        <div id="duplicate-list"></div>
+                    </div>
+                    <div id="import-transactions-preview"></div>
+                    <div class="upload-actions">
+                        <button id="btn-confirm-import" class="btn-primary">Confirmar importación</button>
+                        <button id="btn-cancel-import" class="btn-secondary">Cancelar</button>
+                    </div>
+                </div>
+
+                <hr class="divider">
+
+                <div class="backup-section">
+                    <h3>Copia de seguridad</h3>
+                    <p class="folder-path">Guarda todos tus datos (movimientos, categorías, saldos, fondos) en un archivo, o restáuralos. Útil para pasar tus datos entre el ordenador y el móvil.</p>
+                    <div class="backup-actions">
+                        <button id="btn-export-data" class="btn-primary">Exportar copia (.json)</button>
+                        <button id="btn-import-data" class="btn-secondary">Restaurar copia</button>
+                        <input type="file" id="import-data-input" accept=".json" hidden>
+                    </div>
+                    <div id="backup-status" class="folder-status"></div>
+                </div>
+
+                <hr class="divider">
+
+                <div class="sync-section">
+                    <h3>Sincronización con el móvil (cifrada)</h3>
+                    <p class="folder-path">Tu copia se cifra con una contraseña que solo tú sabes. Publícala en tu Google Drive desde el PC y el móvil la leerá y descifrará solo. Ni Google ni nadie puede leerla sin tu contraseña.</p>
+
+                    <label class="sync-label">Contraseña de cifrado</label>
+                    <input type="password" id="sync-pass" class="sync-input" placeholder="Una contraseña que recuerdes">
+
+                    <div class="sync-block">
+                        <h4>En el ordenador — publicar</h4>
+                        <button id="btn-publish-sync" class="btn-primary">Publicar copia cifrada</button>
+                        <label class="sync-check"><input type="checkbox" id="sync-auto"> Publicar automáticamente cuando haga cambios (requiere escribir la contraseña una vez)</label>
+                        <p class="sync-hint">La copia cifrada se sube a tu Gist secreto de GitHub. Nadie puede leerla sin tu contraseña.</p>
+                    </div>
+
+                    <div class="sync-block">
+                        <h4>En el móvil — consultar</h4>
+                        <label class="sync-label">URL de tu copia (enlace de Google Drive / Gist)</label>
+                        <input type="text" id="sync-url" class="sync-input" placeholder="https://...">
+                        <label class="sync-check"><input type="checkbox" id="sync-remember"> Recordar la contraseña en este dispositivo (para que cargue sola al abrir)</label>
+                        <button id="btn-load-sync" class="btn-primary">Cargar desde sincronización</button>
+                    </div>
+
+                    <div id="sync-status" class="folder-status"></div>
+                </div>
+            </section>
+        </main>
+
+        <!-- MODAL for recategorization and subcategory drill-down -->
+        <div id="modal" class="modal" hidden>
+            <div class="modal-content">
+                <button class="modal-close" id="modal-close">&times;</button>
+                <div id="modal-body"></div>
+            </div>
+        </div>
+    </div>
+
+    <script src="lib/xlsx.full.min.js"></script>
+    <script src="lib/chart.umd.min.js"></script>
+    <script src="js/categories.js?v=21"></script>
+    <script src="js/private.rules.js?v=21" onerror="console.log('Sin reglas privadas (modo público/móvil)')"></script>
+    <script src="js/crypto.js?v=21"></script>
+    <script src="js/db.js?v=21"></script>
+    <script src="js/parser.js?v=21"></script>
+    <script src="js/charts.js?v=21"></script>
+    <script src="js/app.js?v=21"></script>
+    <script>
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('./sw.js');
+        }
+    </script>
+</body>
+</html>

@@ -1,0 +1,10 @@
+# Datos personales — NUNCA subir
+extractos/
+sync/
+sync_config.json
+js/private.rules.js
+
+# Entorno local
+.claude/
+*.bak
+MisFinanzas.bat
