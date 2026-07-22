@@ -5,7 +5,15 @@
 const CRYPTO_ITERATIONS = 150000;
 
 function _b64(buf) {
-    return btoa(String.fromCharCode(...new Uint8Array(buf)));
+    // Por bloques: con datos grandes, esparcir todo el array como argumentos
+    // (String.fromCharCode(...bytes)) desborda la pila de llamadas.
+    const bytes = new Uint8Array(buf);
+    const CHUNK = 0x8000;
+    let binary = '';
+    for (let i = 0; i < bytes.length; i += CHUNK) {
+        binary += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
+    }
+    return btoa(binary);
 }
 function _unb64(str) {
     return Uint8Array.from(atob(str), c => c.charCodeAt(0));
