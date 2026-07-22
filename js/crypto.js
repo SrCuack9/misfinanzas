@@ -50,6 +50,9 @@ async function encryptPayload(obj, passphrase) {
 
 async function decryptPayload(envelope, passphrase) {
     if (!envelope || !envelope.encrypted) throw new Error('El archivo no está cifrado.');
+    if (!envelope.salt || !envelope.iv || !envelope.data) {
+        throw new Error('Todavía no hay ninguna copia publicada. Publica primero desde el ordenador (Extractos → Sincronización).');
+    }
     const salt = _unb64(envelope.salt);
     const iv = _unb64(envelope.iv);
     const key = await _deriveKey(passphrase, salt);

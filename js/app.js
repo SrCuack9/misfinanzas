@@ -575,8 +575,9 @@ async function applyBackupObject(data) {
 }
 
 // Publica la copia cifrada en el servidor local, que a su vez la sube al Gist
-// secreto de GitHub. Devuelve el resultado del servidor (o null sin servidor).
-async function publishSnapshot(pass) {
+// secreto de GitHub. Devuelve el resultado del servidor, o null si no hay
+// servidor (en ese caso, SOLO si es una publicación manual, descarga el archivo).
+async function publishSnapshot(pass, interactive) {
     const envelope = await encryptPayload(await buildBackupObject(), pass);
     const json = JSON.stringify(envelope);
     try {
@@ -586,13 +587,15 @@ async function publishSnapshot(pass) {
         if (result.raw_url) await saveSetting('sync_url', result.raw_url);
         return result;
     } catch (e) {
-        // Sin servidor (móvil u otro): descargar el archivo como alternativa.
-        const blob = new Blob([json], { type: 'application/json' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url; a.download = 'misfinanzas-sync.json';
-        document.body.appendChild(a); a.click(); a.remove();
-        URL.revokeObjectURL(url);
+        if (interactive) {
+            // Solo con el botón manual: descargar como alternativa.
+            const blob = new Blob([json], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url; a.download = 'misfinanzas-sync.json';
+            document.body.appendChild(a); a.click(); a.remove();
+            URL.revokeObjectURL(url);
+        }
         return null;
     }
 }
@@ -606,13 +609,13 @@ document.getElementById('btn-publish-sync').addEventListener('click', async () =
         if (document.getElementById('sync-auto').checked) {
             await saveSetting('sync_passphrase', pass);
         }
-        const result = await publishSnapshot(pass);
+        const result = await publishSnapshot(pass, true);
         if (result && result.gist_pushed) {
             statusEl.innerHTML = '<span class="status-success">Copia cifrada subida a tu Gist secreto de GitHub. El móvil ya puede leerla.</span>';
         } else if (result) {
             statusEl.innerHTML = `<span class="status-info">Copia guardada en el PC, pero no se pudo subir al Gist: ${escapeHtml(result.gist_error || 'configura sync_config.json')}.</span>`;
         } else {
-            statusEl.innerHTML = '<span class="status-success">Copia cifrada descargada (sin servidor). Súbela tú a tu nube.</span>';
+            statusEl.innerHTML = '<span class="status-info">No se pudo hablar con el servidor local (¿MisFinanzas.bat reiniciado?). Se ha descargado la copia como alternativa.</span>';
         }
     } catch (err) {
         statusEl.innerHTML = `<span style="color:var(--accent-red)">Error al publicar: ${err.message}</span>`;
@@ -630,7 +633,7 @@ function scheduleAutoPublish() {
             const auto = await getSetting('sync_auto');
             const pass = await getSetting('sync_passphrase');
             if (!auto || !pass) return;
-            const result = await publishSnapshot(pass);
+            const result = await publishSnapshot(pass, false);
             if (result && result.gist_pushed) console.log('Sincronización auto-publicada.');
         } catch (e) {
             console.warn('Auto-publicación falló:', e);
@@ -646,7 +649,10 @@ document.getElementById('sync-auto').addEventListener('change', async (e) => {
 });
 
 async function loadFromSync(url, pass, statusEl) {
-    const resp = await fetch(url, { cache: 'no-store' });
+    // Cache-buster: la CDN del Gist cachea ~5 min; con un parámetro único
+    // siempre llega la última versión publicada.
+    const bustUrl = url + (url.includes('?') ? '&' : '?') + 't=' + Date.now();
+    const resp = await fetch(bustUrl, { cache: 'no-store' });
     if (!resp.ok) throw new Error('No se pudo descargar la copia (revisa la URL y que sea de acceso con enlace).');
     const envelope = await resp.json();
     const data = await decryptPayload(envelope, pass);
