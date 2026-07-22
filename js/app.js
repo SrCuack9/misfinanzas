@@ -21,6 +21,7 @@ document.querySelectorAll('.nav-btn').forEach(btn => {
         if (view === 'transactions') refreshTransactions();
         if (view === 'compare') refreshCompare();
         if (view === 'stats') refreshStats();
+        if (view === 'analysis') refreshAnalysis();
         if (view === 'accounts') refreshAccounts();
         if (view === 'upload') scanFolder();
     });
@@ -379,9 +380,9 @@ function showImportPreview(data) {
                 <span class="tx-amount ${amountClass}">${formatCurrency(t.amount)}</span>
                 <span></span>
             </div>`;
-        }).join('') + (data.transactions.length > 30 ? `<div style="text-align:center;padding:12px;color:#8888aa">... y ${data.transactions.length - 30} movimientos más</div>` : '');
+        }).join('') + (data.transactions.length > 30 ? `<div class="empty-msg" style="padding:12px">... y ${data.transactions.length - 30} movimientos más</div>` : '');
     } else {
-        txPreview.innerHTML = '<div style="text-align:center;padding:20px;color:#8888aa">Todos los movimientos ya estaban importados.</div>';
+        txPreview.innerHTML = '<div class="empty-msg" style="padding:20px">Todos los movimientos ya estaban importados.</div>';
     }
 }
 
@@ -921,7 +922,7 @@ function refreshTransactions() {
         : '';
 
     if (txs.length === 0) {
-        container.innerHTML = hiddenBar + '<div style="text-align:center;padding:40px;color:#8888aa">No hay movimientos. Ve a la pestaña "Extractos" para importar datos.</div>';
+        container.innerHTML = hiddenBar + '<div class="empty-msg">No hay movimientos. Ve a la pestaña "Extractos" para importar datos.</div>';
         return;
     }
 
@@ -1156,6 +1157,349 @@ function refreshStats() {
     renderStatsChart('chart-stats', months.map(monthLabelOf), perMonth, info.color, isInc ? 'Ingresos' : 'Gastos', avg);
 }
 
+// ==================== ANÁLISIS ====================
+
+// Meses COMPLETOS (excluye el mes en curso, que está a medias y desviaría medias).
+function getCompleteMonths() {
+    const current = new Date().toISOString().substring(0, 7);
+    return [...new Set(allTransactions.map(t => t.month))].filter(m => m < current).sort();
+}
+
+// Universo de gastos "reales": fuera cancelaciones y categorías neutrales.
+function realExpenses() {
+    return allTransactions.filter(t =>
+        t.amount < 0 && !refundedIds.has(t.id) &&
+        !isIncomeCategory(t.category) && !isNeutralCategory(t.category));
+}
+
+function median(arr) {
+    if (!arr.length) return 0;
+    const s = [...arr].sort((a, b) => a - b);
+    const mid = Math.floor(s.length / 2);
+    return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
+}
+
+// --- 1) Recurrentes: mismo comercio, importe similar, cadencia regular ---
+function detectRecurring() {
+    const groups = {};
+    realExpenses().forEach(t => {
+        const key = conceptKey(t.concept);
+        if (!key) return;
+        (groups[key] = groups[key] || []).push(t);
+    });
+
+    const found = [];
+    const today = new Date();
+    for (const [key, txs] of Object.entries(groups)) {
+        if (txs.length < 3) continue;
+        txs.sort((a, b) => a.date.localeCompare(b.date));
+        const intervals = [];
+        for (let i = 1; i < txs.length; i++) {
+            intervals.push((new Date(txs[i].date) - new Date(txs[i - 1].date)) / 86400000);
+        }
+        const med = median(intervals);
+        const amounts = txs.map(t => Math.abs(t.amount));
+        const avgAmount = amounts.reduce((a, b) => a + b, 0) / amounts.length;
+        // Importe consistente: el mayor no llega al doble del menor.
+        const consistent = Math.max(...amounts) / Math.min(...amounts) <= 1.8;
+        if (!consistent) continue;
+
+        let cadence = null, monthly = 0;
+        if (med >= 5 && med <= 9) { cadence = 'semanal'; monthly = avgAmount * 4.33; }
+        else if (med >= 25 && med <= 37) { cadence = 'mensual'; monthly = avgAmount; }
+        if (!cadence) continue;
+
+        const last = txs[txs.length - 1];
+        const daysSince = (today - new Date(last.date)) / 86400000;
+        const active = daysSince <= med * 1.8;
+
+        found.push({
+            label: (last.subcategory && last.subcategory !== 'Sin clasificar') ? last.subcategory : key.substring(0, 32),
+            category: last.category,
+            cadence, monthly, avgAmount,
+            count: txs.length,
+            lastDate: last.date,
+            active,
+        });
+    }
+    return found.sort((a, b) => (b.active - a.active) || (b.monthly - a.monthly));
+}
+
+// --- 2) Tendencias por categoría (últimos 6 meses completos) ---
+function computeTrends() {
+    const months = getCompleteMonths().slice(-6);
+    if (months.length < 4) return { rising: [], falling: [], months };
+
+    const perCat = {};
+    realExpenses().forEach(t => {
+        if (!months.includes(t.month)) return;
+        (perCat[t.category] = perCat[t.category] || {})[t.month] =
+            (perCat[t.category]?.[t.month] || 0) + Math.abs(t.amount);
+    });
+
+    const half = Math.floor(months.length / 2);
+    const older = months.slice(0, months.length - half);
+    const recent = months.slice(-half);
+
+    const rising = [], falling = [];
+    for (const [cat, byMonth] of Object.entries(perCat)) {
+        const avgOld = older.reduce((s, m) => s + (byMonth[m] || 0), 0) / older.length;
+        const avgNew = recent.reduce((s, m) => s + (byMonth[m] || 0), 0) / recent.length;
+        if (avgNew < 15 && avgOld < 15) continue; // ruido
+        if (avgOld < 1) { if (avgNew > 30) rising.push({ cat, avgOld, avgNew, pct: null }); continue; }
+        const pct = (avgNew - avgOld) / avgOld * 100;
+        if (pct >= 20 && avgNew - avgOld >= 10) rising.push({ cat, avgOld, avgNew, pct });
+        else if (pct <= -20 && avgOld - avgNew >= 10) falling.push({ cat, avgOld, avgNew, pct });
+    }
+    rising.sort((a, b) => (b.avgNew - b.avgOld) - (a.avgNew - a.avgOld));
+    falling.sort((a, b) => (a.avgNew - a.avgOld) - (b.avgNew - b.avgOld));
+    return { rising, falling, months, older, recent };
+}
+
+// --- 3) Gastos inusuales (últimos 60 días, muy por encima del patrón) ---
+function findUnusual() {
+    const cutoff = new Date(Date.now() - 60 * 86400000).toISOString().substring(0, 10);
+    const byCat = {};
+    realExpenses().forEach(t => {
+        (byCat[t.category] = byCat[t.category] || []).push(Math.abs(t.amount));
+    });
+    const results = [];
+    realExpenses().forEach(t => {
+        if (t.date < cutoff) return;
+        const amts = byCat[t.category];
+        if (!amts || amts.length < 5) return;
+        const med = median(amts);
+        const amount = Math.abs(t.amount);
+        if (amount >= Math.max(3 * med, 40) && amount >= 40) {
+            results.push({ tx: t, ratio: amount / med, med });
+        }
+    });
+    return results.sort((a, b) => b.ratio - a.ratio).slice(0, 6);
+}
+
+// --- 4) Fijos vs reducibles ---
+const DEFAULT_FIXED = ['alquiler', 'telefonia', 'seguros'];
+let fixedCategories = null;
+
+async function getFixedCategories() {
+    if (fixedCategories === null) {
+        fixedCategories = await getSetting('fixed_categories') || DEFAULT_FIXED;
+    }
+    return fixedCategories;
+}
+
+window.toggleFixedCategory = async function(catId) {
+    const fixed = await getFixedCategories();
+    const idx = fixed.indexOf(catId);
+    if (idx >= 0) fixed.splice(idx, 1); else fixed.push(catId);
+    fixedCategories = fixed;
+    await saveSetting('fixed_categories', fixed);
+    refreshAnalysis();
+};
+
+// Medias mensuales por categoría sobre los últimos N meses completos.
+function monthlyAverages(monthsWindow) {
+    const months = getCompleteMonths().slice(-monthsWindow);
+    const n = months.length || 1;
+    const byCat = {};
+    realExpenses().forEach(t => {
+        if (!months.includes(t.month)) return;
+        byCat[t.category] = (byCat[t.category] || 0) + Math.abs(t.amount);
+    });
+    for (const k of Object.keys(byCat)) byCat[k] /= n;
+
+    let income = 0;
+    allTransactions.forEach(t => {
+        if (!months.includes(t.month)) return;
+        if (refundedIds.has(t.id) || isNeutralCategory(t.category)) return;
+        if (t.amount > 0 && isIncomeCategory(t.category)) income += t.amount;
+    });
+    return { byCat, avgIncome: income / n, months };
+}
+
+// --- Render principal ---
+async function refreshAnalysis() {
+    const container = document.getElementById('analysis-content');
+    const months = getCompleteMonths();
+    if (months.length === 0) {
+        container.innerHTML = '<div class="empty-msg">Aún no hay meses completos de datos. Importa extractos primero.</div>';
+        document.getElementById('goal-result').innerHTML = '';
+        return;
+    }
+
+    const fixed = await getFixedCategories();
+    const { byCat, avgIncome, months: windowMonths } = monthlyAverages(6);
+    document.getElementById('analysis-period-hint').textContent =
+        `Basado en tus últimos ${windowMonths.length} meses completos (${monthLabelOf(windowMonths[0])} – ${monthLabelOf(windowMonths[windowMonths.length - 1])}).`;
+
+    let html = '';
+
+    // ---- Recurrentes ----
+    const recurring = detectRecurring();
+    const activeRec = recurring.filter(r => r.active);
+    const totalRec = activeRec.reduce((s, r) => s + r.monthly, 0);
+    html += `<div class="analysis-section">
+        <h3>🔁 Gastos recurrentes detectados</h3>
+        <p class="analysis-sub">${activeRec.length
+            ? `Pagas <strong>${formatCurrency(totalRec)}/mes</strong> en ${activeRec.length} gastos que se repiten solos.`
+            : 'No se han detectado gastos recurrentes todavía.'}</p>`;
+    if (recurring.length) {
+        html += '<div class="analysis-list">' + recurring.map(r => {
+            const info = getCategoryInfo(r.category);
+            return `<div class="analysis-item">
+                <span class="ai-title">
+                    <span class="cat-dot" style="background:${info.color}"></span>${escapeHtml(r.label)}
+                    <span class="badge ${r.cadence === 'mensual' ? 'badge-monthly' : 'badge-weekly'}">${r.cadence}</span>
+                    ${r.active ? '' : '<span class="badge badge-off">sin cargos recientes</span>'}
+                </span>
+                <span class="ai-detail">${r.count} cargos · último el ${formatDateDisplay(r.lastDate)} · ${escapeHtml(info.label)}</span>
+                <span class="ai-amount">${formatCurrency(r.monthly)}<small>/mes</small></span>
+            </div>`;
+        }).join('') + '</div>';
+    }
+    html += '</div>';
+
+    // ---- Tendencias ----
+    const trends = computeTrends();
+    html += `<div class="analysis-section">
+        <h3>📈 Tendencias</h3>
+        <p class="analysis-sub">Comparando la media reciente con la de los meses anteriores.</p>`;
+    if (trends.rising.length === 0 && trends.falling.length === 0) {
+        html += `<div class="analysis-highlight">${trends.months.length < 4
+            ? 'Necesito al menos 4 meses completos para detectar tendencias con fiabilidad.'
+            : 'Sin cambios bruscos: tus gastos se mantienen estables. 👌'}</div>`;
+    } else {
+        html += '<div class="analysis-list">';
+        trends.rising.forEach(r => {
+            const info = getCategoryInfo(r.cat);
+            html += `<div class="analysis-item">
+                <span class="ai-title"><span class="cat-dot" style="background:${info.color}"></span>${escapeHtml(info.label)}
+                    <span class="badge badge-up">▲ ${r.pct === null ? 'nuevo' : '+' + r.pct.toFixed(0) + '%'}</span></span>
+                <span class="ai-detail">antes ${formatCurrency(r.avgOld)}/mes → ahora ${formatCurrency(r.avgNew)}/mes</span>
+                <span class="ai-amount negative">+${formatCurrency(r.avgNew - r.avgOld)}<small>/mes</small></span>
+            </div>`;
+        });
+        trends.falling.forEach(r => {
+            const info = getCategoryInfo(r.cat);
+            html += `<div class="analysis-item">
+                <span class="ai-title"><span class="cat-dot" style="background:${info.color}"></span>${escapeHtml(info.label)}
+                    <span class="badge badge-down">▼ ${r.pct.toFixed(0)}%</span></span>
+                <span class="ai-detail">antes ${formatCurrency(r.avgOld)}/mes → ahora ${formatCurrency(r.avgNew)}/mes</span>
+                <span class="ai-amount positive">−${formatCurrency(r.avgOld - r.avgNew)}<small>/mes</small></span>
+            </div>`;
+        });
+        html += '</div>';
+    }
+    html += '</div>';
+
+    // ---- Inusuales ----
+    const unusual = findUnusual();
+    html += `<div class="analysis-section">
+        <h3>⚠️ Gastos fuera de lo normal <span class="stats-hint">(últimos 60 días)</span></h3>
+        <p class="analysis-sub">Movimientos muy por encima de tu patrón habitual en su categoría.</p>`;
+    if (unusual.length === 0) {
+        html += '<div class="analysis-highlight">Nada raro últimamente. Todo dentro de tu patrón habitual. ✅</div>';
+    } else {
+        html += '<div class="analysis-list">' + unusual.map(u => {
+            const info = getCategoryInfo(u.tx.category);
+            return `<div class="analysis-item">
+                <span class="ai-title"><span class="cat-dot" style="background:${info.color}"></span>${escapeHtml(u.tx.subcategory || info.label)}
+                    <span class="badge badge-warn">×${u.ratio.toFixed(1)} de lo normal</span></span>
+                <span class="ai-detail">${formatDateDisplay(u.tx.date)} · lo típico en ${escapeHtml(info.label)} son ${formatCurrency(u.med)}</span>
+                <span class="ai-amount negative">${formatCurrency(u.tx.amount)}</span>
+            </div>`;
+        }).join('') + '</div>';
+    }
+    html += '</div>';
+
+    // ---- Fijos vs reducibles ----
+    const cats = Object.entries(byCat).sort((a, b) => b[1] - a[1]);
+    const fixedTotal = cats.filter(([c]) => fixed.includes(c)).reduce((s, [, v]) => s + v, 0);
+    const redTotal = cats.filter(([c]) => !fixed.includes(c)).reduce((s, [, v]) => s + v, 0);
+    html += `<div class="analysis-section">
+        <h3>🔒 Gastos fijos vs. reducibles</h3>
+        <p class="analysis-sub">Toca una categoría para marcarla como fija (no se puede recortar) o reducible. Se usa en el simulador de abajo.</p>
+        <div class="fixed-chips">` +
+        cats.map(([c, v]) => {
+            const info = getCategoryInfo(c);
+            const isFixed = fixed.includes(c);
+            return `<button class="fixed-chip ${isFixed ? 'is-fixed' : ''}" onclick="toggleFixedCategory('${c}')">
+                <span class="chip-lock">${isFixed ? '🔒' : '✂️'}</span>${escapeHtml(info.label)} · ${formatCurrency(v)}/mes
+            </button>`;
+        }).join('') +
+        `</div>
+        <div class="stats-cards">
+            <div class="stat-card"><span>Ingresos medios</span><strong class="positive">${formatCurrency(avgIncome)}</strong><em>/mes</em></div>
+            <div class="stat-card"><span>Gastos fijos 🔒</span><strong>${formatCurrency(fixedTotal)}</strong><em>/mes</em></div>
+            <div class="stat-card"><span>Gastos reducibles ✂️</span><strong>${formatCurrency(redTotal)}</strong><em>/mes</em></div>
+            <div class="stat-card stat-card-hl"><span>Ahorro actual</span><strong class="${avgIncome - fixedTotal - redTotal >= 0 ? 'positive' : 'negative'}">${formatCurrency(avgIncome - fixedTotal - redTotal)}</strong><em>/mes</em></div>
+        </div>
+    </div>`;
+
+    container.innerHTML = html;
+
+    // Recalcular el simulador si ya había un objetivo puesto.
+    const savedGoal = await getSetting('savings_goal');
+    if (savedGoal && !document.getElementById('goal-input').value) {
+        document.getElementById('goal-input').value = savedGoal;
+    }
+    if (document.getElementById('goal-input').value) runGoalSimulator();
+}
+
+// --- 5) Simulador de objetivo ---
+async function runGoalSimulator() {
+    const goal = parseFloat(document.getElementById('goal-input').value);
+    const resultEl = document.getElementById('goal-result');
+    if (isNaN(goal) || goal < 0) { resultEl.innerHTML = ''; return; }
+    await saveSetting('savings_goal', goal);
+
+    const fixed = await getFixedCategories();
+    const { byCat, avgIncome } = monthlyAverages(6);
+    const fixedTotal = Object.entries(byCat).filter(([c]) => fixed.includes(c)).reduce((s, [, v]) => s + v, 0);
+    const reducibles = Object.entries(byCat).filter(([c]) => !fixed.includes(c)).sort((a, b) => b[1] - a[1]);
+    const redTotal = reducibles.reduce((s, [, v]) => s + v, 0);
+    const currentSavings = avgIncome - fixedTotal - redTotal;
+
+    if (goal <= currentSavings) {
+        resultEl.innerHTML = `<p class="goal-verdict">✅ <strong>Ya lo consigues.</strong> Con tus números actuales ahorras de media
+            <strong>${formatCurrency(currentSavings)}/mes</strong> — ${formatCurrency(currentSavings - goal)} por encima de tu objetivo.</p>`;
+        return;
+    }
+
+    const needed = goal - currentSavings;
+    const maxPossible = avgIncome - fixedTotal; // recortándolo TODO
+
+    if (needed > redTotal) {
+        resultEl.innerHTML = `<p class="goal-verdict">❌ <strong>No alcanzable sin tocar los fijos.</strong>
+            Te faltan ${formatCurrency(needed)}/mes, pero solo tienes ${formatCurrency(redTotal)}/mes en gastos reducibles.
+            Eliminándolos TODOS llegarías a ahorrar como máximo <strong>${formatCurrency(maxPossible)}/mes</strong>.
+            Para este objetivo necesitas subir ingresos o revisar los fijos.</p>`;
+        return;
+    }
+
+    const factor = needed / redTotal;
+    const rows = reducibles.filter(([, v]) => v >= 1).map(([c, v]) => {
+        const info = getCategoryInfo(c);
+        return `<div class="goal-row">
+            <span><span class="cat-dot" style="background:${info.color}"></span> ${escapeHtml(info.label)}</span>
+            <span>${formatCurrency(v)}</span>
+            <span class="goal-cut">−${formatCurrency(v * factor)}</span>
+            <span><strong>${formatCurrency(v * (1 - factor))}</strong></span>
+        </div>`;
+    }).join('');
+
+    resultEl.innerHTML = `
+        <p class="goal-verdict">🟡 <strong>Alcanzable.</strong> Ahorras ${formatCurrency(currentSavings)}/mes; te faltan
+        <strong>${formatCurrency(needed)}/mes</strong>. Recortando un <strong>${(factor * 100).toFixed(0)}%</strong> de cada gasto reducible, lo consigues:</p>
+        <div class="goal-table">
+            <div class="goal-row goal-row-head"><span>Categoría</span><span>Gasto medio</span><span>Recorte</span><span>Objetivo</span></div>
+            ${rows}
+        </div>`;
+}
+
+document.getElementById('goal-btn').addEventListener('click', runGoalSimulator);
+document.getElementById('goal-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') runGoalSimulator(); });
+
 // ==================== ACCOUNTS ====================
 
 async function refreshAccounts() {
@@ -1227,7 +1571,7 @@ async function refreshAccounts() {
             </div>`;
         }).join('');
     } else {
-        fundsList.innerHTML = '<p style="color:#8888aa;font-size:0.85rem">Aún no hay fondos. Añade uno abajo o importa un extracto de MyInvestor.</p>';
+        fundsList.innerHTML = '<p class="empty-msg" style="padding:8px 0;text-align:left;font-size:0.85rem">Aún no hay fondos. Añade uno abajo o importa un extracto de MyInvestor.</p>';
     }
 }
 
@@ -1271,7 +1615,7 @@ function showCategoryDrilldown(categoryId) {
     const sorted = Object.entries(bySub).sort((a, b) => b[1].total - a[1].total);
 
     let html = `<h3>${catInfo.label}</h3>
-        <p style="color:#8888aa;margin-bottom:16px">Total: ${formatCurrency(-txs.reduce((s, t) => s + t.amount, 0))} en ${txs.length} movimientos</p>
+        <p class="modal-sub">Total: ${formatCurrency(-txs.reduce((s, t) => s + t.amount, 0))} en ${txs.length} movimientos</p>
         <div class="subcategory-list">
             ${sorted.map(([name, data]) => `
                 <div class="subcat-item" onclick="showSubcategoryTransactions('${categoryId}', '${escapeHtml(name)}')">
@@ -1318,7 +1662,7 @@ window.showRecategorize = function(txId) {
         : getAllExpenseCategories();
 
     let html = `<h3>Recategorizar</h3>
-        <p style="color:#8888aa;margin-bottom:16px;font-size:0.85rem">${escapeHtml(tx.concept)}</p>
+        <p class="modal-sub">${escapeHtml(tx.concept)}</p>
         <div>
             ${categories.map(c => `
                 <div class="category-option ${c.id === tx.category ? 'selected' : ''}">

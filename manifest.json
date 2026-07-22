@@ -4,8 +4,8 @@
     "description": "Gestor de finanzas personales offline",
     "start_url": "./index.html",
     "display": "standalone",
-    "background_color": "#0a0a0f",
-    "theme_color": "#0a0a0f",
+    "background_color": "#f3f5f9",
+    "theme_color": "#f3f5f9",
     "icons": [
         {
             "src": "icon.svg",

@@ -1,6 +1,20 @@
-Chart.defaults.color = '#8888aa';
-Chart.defaults.borderColor = '#2a2a40';
-Chart.defaults.font.family = '-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif';
+Chart.defaults.color = '#66708a';
+Chart.defaults.borderColor = '#e4e8f1';
+Chart.defaults.font.family = "'Segoe UI Variable Text', 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, sans-serif";
+
+// Tooltip claro coherente con el tema
+const LIGHT_TOOLTIP = {
+    backgroundColor: '#ffffff',
+    titleColor: '#1b2437',
+    bodyColor: '#3d4966',
+    footerColor: '#66708a',
+    borderColor: '#e4e8f1',
+    borderWidth: 1,
+    padding: 12,
+    cornerRadius: 10,
+    boxPadding: 4,
+    titleFont: { weight: 'bold' },
+};
 
 let donutChart = null;
 let horizontalChart = null;
@@ -46,7 +60,7 @@ function renderStatsChart(canvasId, labels, values, color, seriesLabel, avg) {
                     type: 'line',
                     label: 'Promedio',
                     data: labels.map(() => avg),
-                    borderColor: '#FFD700',
+                    borderColor: '#4f46e5',
                     borderWidth: 2,
                     borderDash: [6, 4],
                     pointRadius: 0,
@@ -60,10 +74,10 @@ function renderStatsChart(canvasId, labels, values, color, seriesLabel, avg) {
             maintainAspectRatio: false,
             plugins: {
                 legend: { labels: { usePointStyle: true, pointStyle: 'circle' } },
-                tooltip: { callbacks: { label: (ctx) => `${ctx.dataset.label}: ${formatCurrency(ctx.raw)}` } }
+                tooltip: { ...LIGHT_TOOLTIP, callbacks: { label: (ctx) => `${ctx.dataset.label}: ${formatCurrency(ctx.raw)}` } }
             },
             scales: {
-                y: { ticks: { callback: (v) => formatCurrency(v) }, grid: { color: 'rgba(42,42,64,0.5)' } },
+                y: { ticks: { callback: (v) => formatCurrency(v) }, grid: { color: '#eceff5' } },
                 x: { grid: { display: false } }
             }
         }
@@ -81,8 +95,8 @@ function renderComparisonChart(canvasId, labels, seriesA, seriesB, nameA, nameB)
         data: {
             labels,
             datasets: [
-                { label: nameA, data: seriesA, backgroundColor: 'rgba(255,215,0,0.75)', borderRadius: 6 },
-                { label: nameB, data: seriesB, backgroundColor: 'rgba(96,165,250,0.75)', borderRadius: 6 },
+                { label: nameA, data: seriesA, backgroundColor: 'rgba(79,70,229,0.8)', borderRadius: 6 },
+                { label: nameB, data: seriesB, backgroundColor: 'rgba(14,165,233,0.8)', borderRadius: 6 },
             ]
         },
         options: {
@@ -90,10 +104,10 @@ function renderComparisonChart(canvasId, labels, seriesA, seriesB, nameA, nameB)
             maintainAspectRatio: false,
             plugins: {
                 legend: { labels: { usePointStyle: true, pointStyle: 'circle' } },
-                tooltip: { callbacks: { label: (ctx) => `${ctx.dataset.label}: ${formatCurrency(ctx.raw)}` } }
+                tooltip: { ...LIGHT_TOOLTIP, callbacks: { label: (ctx) => `${ctx.dataset.label}: ${formatCurrency(ctx.raw)}` } }
             },
             scales: {
-                y: { ticks: { callback: (v) => formatCurrency(v) }, grid: { color: 'rgba(42,42,64,0.5)' } },
+                y: { ticks: { callback: (v) => formatCurrency(v) }, grid: { color: '#eceff5' } },
                 x: { grid: { display: false } }
             }
         }
@@ -124,10 +138,10 @@ function renderDonutChart(transactions, onClickCategory) {
             datasets: [{
                 data,
                 backgroundColor: colors,
-                borderColor: '#0a0a0f',
+                borderColor: '#ffffff',
                 borderWidth: 2,
                 hoverOffset: 22,
-                hoverBorderColor: '#fff',
+                hoverBorderColor: '#ffffff',
                 hoverBorderWidth: 2,
             }]
         },
@@ -139,11 +153,7 @@ function renderDonutChart(transactions, onClickCategory) {
             plugins: {
                 legend: { position: 'right', labels: { padding: 12, usePointStyle: true, pointStyle: 'circle' } },
                 tooltip: {
-                    backgroundColor: 'rgba(15,15,25,0.95)',
-                    borderColor: '#FFD700',
-                    borderWidth: 1,
-                    padding: 12,
-                    titleFont: { size: 13, weight: 'bold' },
+                    ...LIGHT_TOOLTIP,
                     bodyFont: { size: 14 },
                     displayColors: true,
                     callbacks: {
@@ -199,8 +209,7 @@ function renderHorizontalBars(transactions) {
             plugins: {
                 legend: { display: false },
                 tooltip: {
-                    backgroundColor: 'rgba(15,15,25,0.95)',
-                    footerColor: '#8888aa',
+                    ...LIGHT_TOOLTIP,
                     footerFont: { size: 10, weight: 'normal' },
                     callbacks: {
                         label: (ctx) => formatCurrency(ctx.raw),
@@ -217,7 +226,7 @@ function renderHorizontalBars(transactions) {
             scales: {
                 x: {
                     ticks: { callback: (v) => formatCurrency(v) },
-                    grid: { color: 'rgba(42,42,64,0.5)' }
+                    grid: { color: '#eceff5' }
                 },
                 y: { grid: { display: false } }
             }
@@ -280,13 +289,13 @@ function renderMonthlyComparison(transactions) {
                 {
                     label: 'Ingresos',
                     data: incomeData,
-                    backgroundColor: 'rgba(52,211,153,0.7)',
+                    backgroundColor: 'rgba(14,159,110,0.85)',
                     borderRadius: 6,
                 },
                 {
                     label: 'Gastos',
                     data: expenseData,
-                    backgroundColor: 'rgba(248,113,113,0.7)',
+                    backgroundColor: 'rgba(224,45,81,0.8)',
                     borderRadius: 6,
                 }
             ]
@@ -296,12 +305,12 @@ function renderMonthlyComparison(transactions) {
             maintainAspectRatio: false,
             plugins: {
                 legend: { labels: { usePointStyle: true, pointStyle: 'circle' } },
-                tooltip: { callbacks: { label: (ctx) => `${ctx.dataset.label}: ${formatCurrency(ctx.raw)}` } }
+                tooltip: { ...LIGHT_TOOLTIP, callbacks: { label: (ctx) => `${ctx.dataset.label}: ${formatCurrency(ctx.raw)}` } }
             },
             scales: {
                 y: {
                     ticks: { callback: (v) => formatCurrency(v) },
-                    grid: { color: 'rgba(42,42,64,0.5)' }
+                    grid: { color: '#eceff5' }
                 },
                 x: { grid: { display: false } }
             }

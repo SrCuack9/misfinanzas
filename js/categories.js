@@ -1,31 +1,31 @@
 const CATEGORIES = {
     expense: {
-        alquiler:       { label: 'Alquiler',           color: '#f87171', cssClass: 'cat-alquiler' },
-        comida:         { label: 'Comida/Supermercado', color: '#34d399', cssClass: 'cat-comida' },
-        restaurantes:   { label: 'Restaurantes/Ocio',  color: '#fb923c', cssClass: 'cat-restaurantes' },
-        gasolina:       { label: 'Gasolina',            color: '#a78bfa', cssClass: 'cat-gasolina' },
-        transporte:     { label: 'Transporte público',  color: '#60a5fa', cssClass: 'cat-transporte' },
-        trenes:         { label: 'Billetes de tren',    color: '#2dd4bf', cssClass: 'cat-trenes' },
-        suscripciones:  { label: 'Suscripciones',       color: '#f472b6', cssClass: 'cat-suscripciones' },
-        compras_online: { label: 'Compras online',      color: '#FFD700', cssClass: 'cat-compras-online' },
-        electronica:    { label: 'Electrónica',         color: '#4A90D9', cssClass: 'cat-electronica' },
-        salud:          { label: 'Salud/Farmacia',      color: '#84cc16', cssClass: 'cat-salud' },
-        ocio:           { label: 'Ocio/Social',         color: '#c084fc', cssClass: 'cat-ocio' },
-        bizum:          { label: 'Bizum',               color: '#00c9a7', cssClass: 'cat-bizum' },
-        viajes:         { label: 'Viajes',              color: '#fbbf24', cssClass: 'cat-viajes' },
-        hogar:          { label: 'Hogar',               color: '#2dd4bf', cssClass: 'cat-hogar' },
-        telefonia:      { label: 'Telefonía/Internet',  color: '#38bdf8', cssClass: 'cat-telefonia' },
-        seguros:        { label: 'Seguros',             color: '#fca5a5', cssClass: 'cat-seguros' },
-        belleza:        { label: 'Belleza/Cuidado',     color: '#f9a8d4', cssClass: 'cat-belleza' },
-        ropa:           { label: 'Ropa/Moda',           color: '#c4b5fd', cssClass: 'cat-ropa' },
-        educacion:      { label: 'Educación',           color: '#67e8f9', cssClass: 'cat-educacion' },
-        cancelado:      { label: 'Cancelado/Devuelto',  color: '#475569', cssClass: 'cat-cancelado' },
-        otros:          { label: 'Otros gastos',        color: '#94a3b8', cssClass: 'cat-otros' },
+        alquiler:       { label: 'Alquiler',           color: '#e02d51', cssClass: 'cat-alquiler' },
+        comida:         { label: 'Comida/Supermercado', color: '#0e9f6e', cssClass: 'cat-comida' },
+        restaurantes:   { label: 'Restaurantes/Ocio',  color: '#ea700b', cssClass: 'cat-restaurantes' },
+        gasolina:       { label: 'Gasolina',            color: '#7c3aed', cssClass: 'cat-gasolina' },
+        transporte:     { label: 'Transporte público',  color: '#2563eb', cssClass: 'cat-transporte' },
+        trenes:         { label: 'Billetes de tren',    color: '#0d9488', cssClass: 'cat-trenes' },
+        suscripciones:  { label: 'Suscripciones',       color: '#db2777', cssClass: 'cat-suscripciones' },
+        compras_online: { label: 'Compras online',      color: '#d9a406', cssClass: 'cat-compras-online' },
+        electronica:    { label: 'Electrónica',         color: '#0284c7', cssClass: 'cat-electronica' },
+        salud:          { label: 'Salud/Farmacia',      color: '#65a30d', cssClass: 'cat-salud' },
+        ocio:           { label: 'Ocio/Social',         color: '#9333ea', cssClass: 'cat-ocio' },
+        bizum:          { label: 'Bizum',               color: '#0a9e83', cssClass: 'cat-bizum' },
+        viajes:         { label: 'Viajes',              color: '#c27803', cssClass: 'cat-viajes' },
+        hogar:          { label: 'Hogar',               color: '#0e7490', cssClass: 'cat-hogar' },
+        telefonia:      { label: 'Telefonía/Internet',  color: '#0369a1', cssClass: 'cat-telefonia' },
+        seguros:        { label: 'Seguros',             color: '#be123c', cssClass: 'cat-seguros' },
+        belleza:        { label: 'Belleza/Cuidado',     color: '#e0447f', cssClass: 'cat-belleza' },
+        ropa:           { label: 'Ropa/Moda',           color: '#6d5ae0', cssClass: 'cat-ropa' },
+        educacion:      { label: 'Educación',           color: '#0891b2', cssClass: 'cat-educacion' },
+        cancelado:      { label: 'Cancelado/Devuelto',  color: '#8792a8', cssClass: 'cat-cancelado' },
+        otros:          { label: 'Otros gastos',        color: '#64748b', cssClass: 'cat-otros' },
     },
     income: {
-        nomina:          { label: 'Nómina',           color: '#34d399', cssClass: 'cat-nomina' },
-        ayuda:           { label: 'Ayuda familiar',   color: '#60a5fa', cssClass: 'cat-ayuda' },
-        otros_ingresos:  { label: 'Otros ingresos',   color: '#a78bfa', cssClass: 'cat-otros-ingresos' },
+        nomina:          { label: 'Nómina',           color: '#0e9f6e', cssClass: 'cat-nomina' },
+        ayuda:           { label: 'Ayuda familiar',   color: '#2563eb', cssClass: 'cat-ayuda' },
+        otros_ingresos:  { label: 'Otros ingresos',   color: '#7c3aed', cssClass: 'cat-otros-ingresos' },
     }
 };
 
@@ -359,7 +359,7 @@ let learnedRules = {};
 // (aparecen en el selector, en getCategoryInfo, en el aprendizaje, etc.).
 let customCategories = { expense: {}, income: {} };
 
-const CUSTOM_COLORS = ['#f59e0b', '#ef4444', '#10b981', '#3b82f6', '#8b5cf6', '#ec4899', '#14b8a6', '#eab308', '#f97316', '#06b6d4'];
+const CUSTOM_COLORS = ['#d97706', '#dc2626', '#059669', '#2563eb', '#7c3aed', '#db2777', '#0d9488', '#ca8a04', '#ea580c', '#0891b2'];
 
 function setCustomCategories(obj) {
     customCategories = { expense: {}, income: {} };
