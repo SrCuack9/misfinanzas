@@ -8,3 +8,4 @@ js/private.rules.js
 .claude/
 *.bak
 MisFinanzas.bat
+__pycache__/
