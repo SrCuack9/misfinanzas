@@ -505,6 +505,8 @@ nav { display: flex; gap: 4px; flex-wrap: wrap; }
 .file-detected { font-size: 0.75rem; font-weight: 600; padding: 3px 9px; border-radius: 12px; }
 .file-detected.sabadell { background: #e3f0fd; color: #1d6fd1; }
 .file-detected.myinvestor { background: #f0eafd; color: #7c3aed; }
+.file-detected.traderepublic { background: #e2f7ef; color: #0b7f58; }
+.file-detected.abanca { background: #fdeaea; color: #c81e45; }
 .file-detected.unknown { background: var(--bg-secondary); color: var(--text-secondary); }
 
 .file-status { font-size: 0.8rem; font-weight: 600; padding: 4px 12px; border-radius: 12px; }
@@ -886,6 +888,7 @@ nav { display: flex; gap: 4px; flex-wrap: wrap; }
 .cat-ropa { background: #ede9fd; color: #5b21b6; }
 .cat-educacion { background: #dff6fa; color: #155e75; }
 .cat-cancelado { background: var(--bg-secondary); color: var(--text-secondary); }
+.cat-efectivo { background: #eceff5; color: #475569; }
 .cat-otros { background: #eceff5; color: #5b6478; }
 .cat-nomina { background: #e2f7ef; color: #0b7f58; }
 .cat-ayuda { background: #e3f0fd; color: #1d6fd1; }

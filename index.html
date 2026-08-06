@@ -7,7 +7,7 @@
     <link rel="manifest" href="manifest.json">
     <meta name="theme-color" content="#f3f5f9">
     <link rel="icon" type="image/svg+xml" href="icon.svg">
-    <link rel="stylesheet" href="styles.css?v=24">
+    <link rel="stylesheet" href="styles.css?v=27">
 </head>
 <body>
     <div id="app">
@@ -190,9 +190,19 @@
                 </div>
                 <div class="accounts-grid">
                     <div class="account-card">
-                        <h3>Cuenta corriente</h3>
+                        <h3>Sabadell · Corriente</h3>
                         <p class="account-number" id="sabadell-account"></p>
                         <p class="account-balance" id="sabadell-balance">0,00 €</p>
+                    </div>
+                    <div class="account-card">
+                        <h3>Abanca · Corriente</h3>
+                        <p class="account-detail">Nueva cuenta principal (nómina)</p>
+                        <p class="account-balance" id="abanca-balance">0,00 €</p>
+                        <div class="savings-edit">
+                            <label>Actualizar saldo:</label>
+                            <input type="number" id="abanca-input" step="0.01" placeholder="Nuevo saldo">
+                            <button id="abanca-update-btn" class="btn-primary">Actualizar</button>
+                        </div>
                     </div>
                     <div class="account-card">
                         <h3>Cuenta Ahorro</h3>
@@ -206,8 +216,9 @@
                     </div>
                     <div class="account-card">
                         <h3>Trade Republic</h3>
-                        <p class="account-detail">Cuenta remunerada</p>
+                        <p class="account-detail">Cuenta remunerada (3% anual)</p>
                         <p class="account-balance" id="traderepublic-balance">0,00 €</p>
+                        <p class="account-detail" id="traderepublic-detail"></p>
                         <div class="savings-edit">
                             <label>Actualizar saldo:</label>
                             <input type="number" id="traderepublic-input" step="0.01" placeholder="Nuevo saldo">
@@ -336,13 +347,13 @@
 
     <script src="lib/xlsx.full.min.js"></script>
     <script src="lib/chart.umd.min.js"></script>
-    <script src="js/categories.js?v=24"></script>
-    <script src="js/private.rules.js?v=24" onerror="console.log('Sin reglas privadas (modo público/móvil)')"></script>
-    <script src="js/crypto.js?v=24"></script>
-    <script src="js/db.js?v=24"></script>
-    <script src="js/parser.js?v=24"></script>
-    <script src="js/charts.js?v=24"></script>
-    <script src="js/app.js?v=24"></script>
+    <script src="js/categories.js?v=27"></script>
+    <script src="js/private.rules.js?v=27" onerror="console.log('Sin reglas privadas (modo público/móvil)')"></script>
+    <script src="js/crypto.js?v=27"></script>
+    <script src="js/db.js?v=27"></script>
+    <script src="js/parser.js?v=27"></script>
+    <script src="js/charts.js?v=27"></script>
+    <script src="js/app.js?v=27"></script>
     <script>
         if ('serviceWorker' in navigator) {
             navigator.serviceWorker.register('./sw.js');

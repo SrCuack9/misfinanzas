@@ -20,6 +20,8 @@ const CATEGORIES = {
         ropa:           { label: 'Ropa/Moda',           color: '#6d5ae0', cssClass: 'cat-ropa' },
         educacion:      { label: 'Educación',           color: '#0891b2', cssClass: 'cat-educacion' },
         cancelado:      { label: 'Cancelado/Devuelto',  color: '#8792a8', cssClass: 'cat-cancelado' },
+        traspaso:       { label: 'Traspaso entre cuentas', color: '#8792a8', cssClass: 'cat-cancelado' },
+        efectivo:       { label: 'Efectivo (cajero)',    color: '#57606f', cssClass: 'cat-efectivo' },
         otros:          { label: 'Otros gastos',        color: '#64748b', cssClass: 'cat-otros' },
     },
     income: {
@@ -102,7 +104,8 @@ const CATEGORY_RULES = [
     { pattern: /EDX\.ORG/i, category: 'suscripciones', subcategory: 'edX' },
     { pattern: /MUSICNOTES/i, category: 'suscripciones', subcategory: 'Musicnotes' },
 
-    // Compras online
+    // Compras online (Amazon Prime va antes: es suscripción, no compra)
+    { pattern: /AMAZON PRIME|PRIME VIDEO/i, category: 'suscripciones', subcategory: 'Amazon Prime' },
     { pattern: /AMAZON/i, category: 'compras_online', subcategory: 'Amazon' },
     { pattern: /ALIEXPRESS/i, category: 'compras_online', subcategory: 'AliExpress' },
     { pattern: /PAYPAL/i, category: 'compras_online', subcategory: 'PayPal' },
@@ -166,6 +169,27 @@ const CATEGORY_RULES = [
     { pattern: /PANADERIA|PANADERÍA|PASTELERIA|PASTELERÍA|HORNO\b/i, category: 'restaurantes', subcategory: 'Panadería' },
     { pattern: /UBER\s?EATS/i, category: 'restaurantes', subcategory: 'Uber Eats' },
     { pattern: /DELIVEROO/i, category: 'restaurantes', subcategory: 'Deliveroo' },
+
+    // ---- Traspasos sin concepto (Abanca) ----
+    { pattern: /^TRASPASO SIN CONCEPTO$/i, category: 'traspaso', subcategory: 'Entre cuentas propias' },
+
+    // ---- Efectivo ----
+    { pattern: /REINTEGRO CAJERO|DISPOSICION CAJERO|RETIRADA EFECTIVO|CAJERO AUTOMATICO/i, category: 'efectivo', subcategory: 'Cajero' },
+
+    // ---- Comercios vistos en mis extractos ----
+    { pattern: /MACLARENS|LABERINTO|COCINA FUSION|KATOYAKI|SAN MIGUEL-|LIMON Y MEN/i, category: 'restaurantes', subcategory: 'Bar/Restaurante' },
+    { pattern: /OPENMARKET|ALIMENTACIO/i, category: 'comida', subcategory: 'Supermercado' },
+    { pattern: /ALCAZAR|CATEDRAL|MONUMENTO|ACUEDUCTO/i, category: 'ocio', subcategory: 'Turismo/Monumentos' },
+    { pattern: /YELMOFILMS|\bYC\s/i, category: 'ocio', subcategory: 'Cine' },
+    { pattern: /AVANZA/i, category: 'transporte', subcategory: 'Autobús' },
+    { pattern: /CARREF/i, category: 'comida', subcategory: 'Carrefour' },
+    { pattern: /VUELING|RYANAIR|IBERIA|AIR EUROPA|EASYJET|AIRLINES|\bATPI\b|AEROLIN/i, category: 'viajes', subcategory: 'Vuelos' },
+    { pattern: /\bEXE\s|CONVENTO CAPUCHINOS|PARADOR|APARTAMENTOS|ALBERGUE/i, category: 'viajes', subcategory: 'Alojamiento' },
+    { pattern: /TELEFERICO|MIRADOR|PARQUE NACIONAL|TENO ACTIVO|EXCURSION|GUIA TURIS/i, category: 'ocio', subcategory: 'Excursiones' },
+    { pattern: /ENGLISH|IDIOMAS|EXAM CENT|CAMBRIDGE|ACADEMIA/i, category: 'educacion', subcategory: 'Inglés/Academia' },
+    { pattern: /TALLER|NEUMATIC|TURBO DIESEL|AUTOMOCION|\bITV\b|MECANIC/i, category: 'transporte', subcategory: 'Coche (taller)' },
+    { pattern: /LOTERIA|ADMON LOTERIA|APUESTAS/i, category: 'ocio', subcategory: 'Lotería' },
+    { pattern: /GROSSO|CAFECENTRA|BUHOS|MASSART/i, category: 'restaurantes', subcategory: 'Bar/Restaurante' },
 
     // ---- Supermercados (Comida) ----
     { pattern: /EROSKI/i, category: 'comida', subcategory: 'Eroski' },
@@ -498,7 +522,7 @@ function isIncomeCategory(categoryId) {
 
 // Categorías que no entran en los totales grandes de Ingresos/Gastos:
 // los Bizum se muestran aparte (en pequeño) y lo cancelado no cuenta.
-const NEUTRAL_CATEGORIES = new Set(['bizum', 'cancelado']);
+const NEUTRAL_CATEGORIES = new Set(['bizum', 'cancelado', 'traspaso']);
 function isNeutralCategory(categoryId) {
     return NEUTRAL_CATEGORIES.has(categoryId);
 }

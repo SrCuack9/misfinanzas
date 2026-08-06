@@ -5,8 +5,10 @@ let currentView = 'dashboard';
 let dashFilters = { year: 'all', month: 'all' };
 let txFilters = { year: 'all', month: 'all', category: 'all', search: '' };
 let showHidden = false;
-// Ids de movimientos que son compra+devolución emparejadas (no cuentan en totales).
+// Ids de movimientos que no cuentan en totales (devoluciones emparejadas y
+// traspasos entre cuentas propias). `internalIds` es un subconjunto: los traspasos.
 let refundedIds = new Set();
+let internalIds = new Set();
 
 // Navigation
 document.querySelectorAll('.nav-btn').forEach(btn => {
@@ -117,9 +119,14 @@ async function scanFolder() {
             let sourceGuess = 'unknown';
             if (nameLower.includes('sabadell') || nameLower.includes('gastos')) sourceGuess = 'sabadell';
             else if (nameLower.includes('myinvestor') || nameLower.includes('investor')) sourceGuess = 'myinvestor';
+            else if (nameLower.startsWith('transactions_')) sourceGuess = 'traderepublic';
+            else if (/^\d{8}_\d{4}_/.test(nameLower)) sourceGuess = 'sabadell';
+            else if (nameLower.endsWith('.csv')) sourceGuess = 'abanca';
 
             const sourceLabel = sourceGuess === 'sabadell' ? 'Sabadell' :
-                                sourceGuess === 'myinvestor' ? 'MyInvestor' : 'Auto-detectar';
+                                sourceGuess === 'myinvestor' ? 'MyInvestor' :
+                                sourceGuess === 'traderepublic' ? 'Trade Republic' :
+                                sourceGuess === 'abanca' ? 'Abanca' : 'Auto-detectar';
             const sourceClass = sourceGuess;
 
             const sizeKB = (f.size / 1024).toFixed(0);
@@ -169,6 +176,8 @@ async function refreshBalancesFromFiles(files) {
         sabadell: { date: '', bal: null, acct: '' },
         savings: { date: '', bal: null },
         myinvestor: { date: '', bal: null },
+        abanca: { date: '', bal: null },
+        traderepublic: { date: '', bal: null },
     };
 
     for (const f of files) {
@@ -185,6 +194,12 @@ async function refreshBalancesFromFiles(files) {
             if (info.myinvestorBalance !== null && d >= best.myinvestor.date) {
                 best.myinvestor = { date: d, bal: info.myinvestorBalance };
             }
+            if (info.abancaBalance !== null && info.abancaBalance !== undefined && d >= best.abanca.date) {
+                best.abanca = { date: d, bal: info.abancaBalance };
+            }
+            if (info.traderepublicBalance !== null && info.traderepublicBalance !== undefined && d >= best.traderepublic.date) {
+                best.traderepublic = { date: d, bal: info.traderepublicBalance };
+            }
         } catch (err) {
             console.error(`Error refreshing balance from ${f.name}:`, err);
         }
@@ -196,6 +211,8 @@ async function refreshBalancesFromFiles(files) {
     }
     if (best.savings.bal !== null) await saveSetting('savings_balance', best.savings.bal);
     if (best.myinvestor.bal !== null) await saveSetting('myinvestor_balance', best.myinvestor.bal);
+    if (best.abanca.bal !== null) await saveSetting('abanca_balance', best.abanca.bal);
+    if (best.traderepublic.bal !== null) await saveSetting('traderepublic_balance', best.traderepublic.bal);
     console.log('Balances refreshed (latest by tx date):', best);
 }
 
@@ -207,8 +224,12 @@ async function importNewFiles(files, importedSet) {
     let myinvestorBalance = 0;
     let sabadellBalance = null;
     let savingsBalance = null;
+    let abancaBalance = null;
+    let traderepublicBalance = null;
     let sabadellDate = '';
     let savingsDate = '';
+    let abancaDate = '';
+    let trDate = '';
     const newFileNames = [];
 
     for (const f of files) {
@@ -227,10 +248,13 @@ async function importNewFiles(files, importedSet) {
             if (result.funds) allFunds.push(...result.funds);
             if (result.accountBalance) myinvestorBalance = result.accountBalance;
             // Entre extractos del mismo tipo, gana el de fecha de movimiento más reciente.
+            if (result.abancaBalance != null && d >= abancaDate) { abancaBalance = result.abancaBalance; abancaDate = d; }
+            if (result.traderepublicBalance != null && d >= trDate) { traderepublicBalance = result.traderepublicBalance; trDate = d; }
             if (result.isSavings) {
                 if (result.savingsBalance != null && d >= savingsDate) { savingsBalance = result.savingsBalance; savingsDate = d; }
-            } else {
-                if (result.sabadellBalance != null && d >= sabadellDate) { sabadellBalance = result.sabadellBalance; sabadellDate = d; if (result.accountNumber) accountNum = result.accountNumber; }
+            } else if (result.sabadellBalance != null && d >= sabadellDate) {
+                sabadellBalance = result.sabadellBalance; sabadellDate = d;
+                if (result.accountNumber) accountNum = result.accountNumber;
             }
         } catch (err) {
             console.error(`Error parsing ${f.name}:`, err);
@@ -257,6 +281,8 @@ async function importNewFiles(files, importedSet) {
         myinvestorBalance,
         sabadellBalance,
         savingsBalance,
+        abancaBalance,
+        traderepublicBalance,
         fileNames: newFileNames,
     };
 
@@ -302,8 +328,12 @@ async function handleFiles(files) {
     let myinvestorBalance = 0;
     let sabadellBalance = null;
     let savingsBalance = null;
+    let abancaBalance = null;
+    let traderepublicBalance = null;
     let sabadellDate = '';
     let savingsDate = '';
+    let abancaDate = '';
+    let trDate = '';
 
     for (const file of files) {
         try {
@@ -312,10 +342,13 @@ async function handleFiles(files) {
             allParsed.push(...result.transactions);
             if (result.funds) allFunds.push(...result.funds);
             if (result.accountBalance) myinvestorBalance = result.accountBalance;
+            if (result.abancaBalance != null && d >= abancaDate) { abancaBalance = result.abancaBalance; abancaDate = d; }
+            if (result.traderepublicBalance != null && d >= trDate) { traderepublicBalance = result.traderepublicBalance; trDate = d; }
             if (result.isSavings) {
                 if (result.savingsBalance != null && d >= savingsDate) { savingsBalance = result.savingsBalance; savingsDate = d; }
-            } else {
-                if (result.sabadellBalance != null && d >= sabadellDate) { sabadellBalance = result.sabadellBalance; sabadellDate = d; if (result.accountNumber) accountNum = result.accountNumber; }
+            } else if (result.sabadellBalance != null && d >= sabadellDate) {
+                sabadellBalance = result.sabadellBalance; sabadellDate = d;
+                if (result.accountNumber) accountNum = result.accountNumber;
             }
         } catch (err) {
             console.error('Error parsing file:', err);
@@ -323,7 +356,8 @@ async function handleFiles(files) {
         }
     }
 
-    if (allParsed.length === 0 && allFunds.length === 0 && savingsBalance === null) {
+    if (allParsed.length === 0 && allFunds.length === 0 && savingsBalance === null &&
+        abancaBalance === null && traderepublicBalance === null) {
         alert('No se encontraron movimientos en el archivo.');
         return;
     }
@@ -340,7 +374,8 @@ async function handleFiles(files) {
         }
     });
 
-    pendingImport = { transactions: newTx, duplicates, funds: allFunds, accountNumber: accountNum, myinvestorBalance, sabadellBalance, savingsBalance };
+    pendingImport = { transactions: newTx, duplicates, funds: allFunds, accountNumber: accountNum,
+        myinvestorBalance, sabadellBalance, savingsBalance, abancaBalance, traderepublicBalance };
     showImportPreview(pendingImport);
 }
 
@@ -407,6 +442,14 @@ document.getElementById('btn-confirm-import').addEventListener('click', async ()
         await saveSetting('savings_balance', pendingImport.savingsBalance);
     }
 
+    if (pendingImport.abancaBalance !== null && pendingImport.abancaBalance !== undefined) {
+        await saveSetting('abanca_balance', pendingImport.abancaBalance);
+    }
+
+    if (pendingImport.traderepublicBalance !== null && pendingImport.traderepublicBalance !== undefined) {
+        await saveSetting('traderepublic_balance', pendingImport.traderepublicBalance);
+    }
+
     if (pendingImport.funds) {
         for (const fund of pendingImport.funds) {
             const existing = (await getAllFunds()).find(f => f.name === fund.name);
@@ -428,6 +471,8 @@ document.getElementById('btn-confirm-import').addEventListener('click', async ()
                     purchases: allPurchases,
                     totalInvested,
                     currentValue: (existing && existing.currentValue) || fund.currentValue || null,
+                    // Conservar a qué bróker pertenece (MyInvestor o Trade Republic).
+                    broker: fund.broker || (existing && existing.broker) || undefined,
                 });
             }
         }
@@ -484,6 +529,15 @@ document.getElementById('savings-update-btn').addEventListener('click', async ()
         document.getElementById('savings-input').value = '';
         refreshDashboard();
     }
+});
+
+document.getElementById('abanca-update-btn').addEventListener('click', async () => {
+    const val = parseFloat(document.getElementById('abanca-input').value);
+    if (isNaN(val) || val < 0) return;
+    await saveSetting('abanca_balance', val);
+    document.getElementById('abanca-input').value = '';
+    await refreshAccounts();
+    refreshDashboard();
 });
 
 document.getElementById('traderepublic-update-btn').addEventListener('click', async () => {
@@ -847,6 +901,39 @@ function reconcileRefunds() {
             refundedIds.add(r.id);
         }
     }
+
+    reconcileInternalTransfers();
+}
+
+// Traspasos entre MIS cuentas (Sabadell → Trade Republic, Abanca → TR, ...).
+// Se detectan por importe idéntico en cuentas distintas con pocos días de
+// diferencia: el dinero no entra ni sale, solo cambia de sitio. Esto cubre los
+// casos en que el banco no da un concepto útil (Abanca los manda como ".").
+function reconcileInternalTransfers() {
+    internalIds = new Set();
+    const candidates = allTransactions.filter(t => !refundedIds.has(t.id) && Math.abs(t.amount) >= 20);
+    const outs = candidates.filter(t => t.amount < 0);
+    const ins = candidates.filter(t => t.amount > 0);
+    const used = new Set();
+
+    for (const o of outs) {
+        const amt = Math.round(Math.abs(o.amount) * 100);
+        let best = null;
+        for (const i of ins) {
+            if (used.has(i.id) || i.source === o.source) continue;
+            if (Math.round(i.amount * 100) !== amt) continue;
+            const days = Math.abs(new Date(i.date) - new Date(o.date)) / 86400000;
+            if (days > 4) continue;
+            if (!best || days < best.days) best = { i, days };
+        }
+        if (best) {
+            used.add(best.i.id);
+            internalIds.add(o.id);
+            internalIds.add(best.i.id);
+        }
+    }
+    // Los traspasos tampoco cuentan como ingreso/gasto en ninguna vista.
+    internalIds.forEach(id => refundedIds.add(id));
 }
 
 // ==================== DASHBOARD ====================
@@ -855,21 +942,28 @@ function reconcileRefunds() {
 async function getMyInvestorTotal() {
     let cash = await getSetting('myinvestor_cash');
     if (cash === null || cash === undefined) cash = await getSetting('myinvestor_balance') || 0;
-    const funds = await getAllFunds();
+    // Solo los fondos de MyInvestor: los de Trade Republic cuentan en su propia cuenta.
+    const funds = (await getAllFunds()).filter(f => f.broker !== 'traderepublic');
     const fundsValue = funds.reduce((s, f) => s + (f.currentValue != null ? f.currentValue : (f.totalInvested || 0)), 0);
     const invested = funds.reduce((s, f) => s + (f.totalInvested || 0), 0);
     return { cash, fundsValue, invested, total: cash + fundsValue };
 }
 
-// Patrimonio total = cuenta corriente + ahorro + Trade Republic + MyInvestor.
+// Patrimonio total = cuentas corrientes + ahorro + Trade Republic + MyInvestor.
 async function getNetWorth() {
-    const checking = await getSetting('sabadell_balance') || 0;
+    const sabadell = await getSetting('sabadell_balance') || 0;
+    const abanca = await getSetting('abanca_balance') || 0;
     const savings = await getSetting('savings_balance') || 0;
-    const tr = await getSetting('traderepublic_balance') || 0;
+    const trCash = await getSetting('traderepublic_balance') || 0;
+    const funds = await getAllFunds();
+    const trFunds = funds.filter(f => f.broker === 'traderepublic')
+        .reduce((s, f) => s + (f.currentValue != null ? f.currentValue : (f.totalInvested || 0)), 0);
+    const tr = trCash + trFunds;
     const mi = (await getMyInvestorTotal()).total;
+    const checking = sabadell + abanca;
     // "Ahorro/inversión" agrupa todo lo que no es la cuenta corriente del día a día.
     const savingsTotal = savings + tr + mi;
-    return { checking, savings, tr, mi, savingsTotal, total: checking + savingsTotal };
+    return { sabadell, abanca, checking, savings, tr, trCash, trFunds, mi, savingsTotal, total: checking + savingsTotal };
 }
 
 async function refreshDashboard() {
@@ -939,7 +1033,9 @@ function refreshTransactions() {
             </div>
             <div class="tx-bottom-row">
                 <span class="tx-concept" title="${escapeHtml(t.concept)}">${escapeHtml(t.concept)}</span>
-                ${refunded ? '<span class="tx-badge-cancel">cancelado</span>' : `<span class="tx-category ${catInfo.cssClass}" onclick="showRecategorize(${t.id})">${catInfo.label}</span>`}
+                ${refunded
+                    ? `<span class="tx-badge-cancel">${internalIds.has(t.id) ? 'traspaso entre cuentas' : 'cancelado'}</span>`
+                    : `<span class="tx-category ${catInfo.cssClass}" onclick="showRecategorize(${t.id})">${catInfo.label}</span>`}
             </div>
         </div>`;
     }).join('');
@@ -1222,7 +1318,14 @@ function detectRecurring() {
             active,
         });
     }
-    return found.sort((a, b) => (b.active - a.active) || (b.monthly - a.monthly));
+    // Un mismo servicio puede aparecer con varios formatos de concepto (el banco
+    // cambia el texto). Nos quedamos con el más reciente de cada etiqueta.
+    const byLabel = {};
+    for (const r of found) {
+        const prev = byLabel[r.label];
+        if (!prev || r.lastDate > prev.lastDate) byLabel[r.label] = r;
+    }
+    return Object.values(byLabel).sort((a, b) => (b.active - a.active) || (b.monthly - a.monthly));
 }
 
 // --- 2) Tendencias por categoría (últimos 6 meses completos) ---
@@ -1516,18 +1619,25 @@ async function refreshAccounts() {
     const savings = await getSetting('savings_balance') || 3501.81;
     document.getElementById('savings-balance').textContent = formatCurrency(savings);
 
-    const tr = await getSetting('traderepublic_balance') || 0;
-    document.getElementById('traderepublic-balance').textContent = formatCurrency(tr);
+    const abanca = await getSetting('abanca_balance') || 0;
+    document.getElementById('abanca-balance').textContent = formatCurrency(abanca);
+
+    const nw = await getNetWorth();
+    document.getElementById('traderepublic-balance').textContent = formatCurrency(nw.tr);
+    document.getElementById('traderepublic-detail').textContent = nw.trFunds > 0
+        ? `${formatCurrency(nw.trCash)} efectivo · ${formatCurrency(nw.trFunds)} en fondos`
+        : '';
 
     const mi = await getMyInvestorTotal();
-    const funds = await getAllFunds();
+    // En Cuentas solo se editan los fondos de MyInvestor (los de TR van solos).
+    const funds = (await getAllFunds()).filter(f => f.broker !== 'traderepublic');
     accountsFunds = funds;
 
     // Banner de patrimonio total
-    const nw = await getNetWorth();
     document.getElementById('networth-total').textContent = formatCurrency(nw.total);
     document.getElementById('networth-breakdown').innerHTML = `
-        <div class="nw-item"><span>Cuenta corriente</span><strong>${formatCurrency(nw.checking)}</strong></div>
+        <div class="nw-item"><span>Sabadell</span><strong>${formatCurrency(nw.sabadell)}</strong></div>
+        <div class="nw-item"><span>Abanca</span><strong>${formatCurrency(nw.abanca)}</strong></div>
         <div class="nw-item"><span>Ahorro</span><strong>${formatCurrency(nw.savings)}</strong></div>
         <div class="nw-item"><span>Trade Republic</span><strong>${formatCurrency(nw.tr)}</strong></div>
         <div class="nw-item"><span>MyInvestor</span><strong>${formatCurrency(nw.mi)}</strong></div>`;
@@ -1878,10 +1988,39 @@ function escapeHtml(str) {
     if (savings === null) {
         await saveSetting('savings_balance', 3501.81);
     }
-    // Trade Republic: 3.000 € ya invertidos (valor inicial, editable en Cuentas).
+    // Trade Republic: el saldo se calcula del CSV; solo ponemos un valor inicial
+    // la primera vez para que la tarjeta no salga a cero.
     const tr = await getSetting('traderepublic_balance');
     if (tr === null || tr === undefined) {
-        await saveSetting('traderepublic_balance', 3000);
+        await saveSetting('traderepublic_balance', 0);
+    }
+
+    // Puesta al día de MyInvestor (agosto 2026): efectivo y fondos declarados a mano,
+    // porque su web no da un extracto con el valor actual. Se aplica una sola vez.
+    if (!(await getSetting('mi_update_2026_08'))) {
+        try {
+            await saveSetting('myinvestor_cash', 1353.82);
+            const declared = [
+                { match: /ISHARES US/i,    name: 'ISHARES US INDEX FUND IE S EUR',   invested: 780.25, value: 885.20 },
+                { match: /ISHARES EMERG/i, name: 'ISHARES EMERGING MARKETS INDEX',   invested: 420.00, value: 421.90 },
+                { match: /VANGUARD/i,      name: 'VANGUARD EUROPEAN STOCK EUR IN',   invested: 388.90, value: 417.63 },
+            ];
+            const existing = await getAllFunds();
+            for (const d of declared) {
+                const prev = existing.find(f => f.broker !== 'traderepublic' && d.match.test(f.name));
+                await saveFund({
+                    name: prev ? prev.name : d.name,
+                    purchases: prev ? (prev.purchases || []) : [],
+                    totalInvested: d.invested,
+                    currentValue: d.value,
+                    manualInvested: true,
+                });
+            }
+            await saveSetting('mi_update_2026_08', true);
+            console.log('MyInvestor actualizado con los datos declarados.');
+        } catch (err) {
+            console.error('MyInvestor update error:', err);
+        }
     }
 
     // Prellenar los campos de sincronización con lo guardado.
