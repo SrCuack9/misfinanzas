@@ -7,7 +7,7 @@
     <link rel="manifest" href="manifest.json">
     <meta name="theme-color" content="#f3f5f9">
     <link rel="icon" type="image/svg+xml" href="icon.svg">
-    <link rel="stylesheet" href="styles.css?v=27">
+    <link rel="stylesheet" href="styles.css?v=29">
 </head>
 <body>
     <div id="app">
@@ -185,6 +185,7 @@
                     <div class="networth-main">
                         <span class="networth-label">Patrimonio total</span>
                         <span class="networth-value" id="networth-total">0,00 €</span>
+                        <button id="btn-recalc-balances" class="btn-secondary btn-small" style="margin-top:8px">Recalcular saldos desde extractos</button>
                     </div>
                     <div class="networth-breakdown" id="networth-breakdown"></div>
                 </div>
@@ -193,11 +194,13 @@
                         <h3>Sabadell · Corriente</h3>
                         <p class="account-number" id="sabadell-account"></p>
                         <p class="account-balance" id="sabadell-balance">0,00 €</p>
+                        <p class="account-detail" id="sabadell-date"></p>
                     </div>
                     <div class="account-card">
                         <h3>Abanca · Corriente</h3>
                         <p class="account-detail">Nueva cuenta principal (nómina)</p>
                         <p class="account-balance" id="abanca-balance">0,00 €</p>
+                        <p class="account-detail" id="abanca-date"></p>
                         <div class="savings-edit">
                             <label>Actualizar saldo:</label>
                             <input type="number" id="abanca-input" step="0.01" placeholder="Nuevo saldo">
@@ -208,6 +211,7 @@
                         <h3>Cuenta Ahorro</h3>
                         <p class="account-detail">Ahorro Sabadell</p>
                         <p class="account-balance" id="savings-balance">3.501,81 €</p>
+                        <p class="account-detail" id="savings-date"></p>
                         <div class="savings-edit">
                             <label>Actualizar saldo:</label>
                             <input type="number" id="savings-input" step="0.01" placeholder="Nuevo saldo">
@@ -347,13 +351,13 @@
 
     <script src="lib/xlsx.full.min.js"></script>
     <script src="lib/chart.umd.min.js"></script>
-    <script src="js/categories.js?v=27"></script>
-    <script src="js/private.rules.js?v=27" onerror="console.log('Sin reglas privadas (modo público/móvil)')"></script>
-    <script src="js/crypto.js?v=27"></script>
-    <script src="js/db.js?v=27"></script>
-    <script src="js/parser.js?v=27"></script>
-    <script src="js/charts.js?v=27"></script>
-    <script src="js/app.js?v=27"></script>
+    <script src="js/categories.js?v=29"></script>
+    <script src="js/private.rules.js?v=29" onerror="console.log('Sin reglas privadas (modo público/móvil)')"></script>
+    <script src="js/crypto.js?v=29"></script>
+    <script src="js/db.js?v=29"></script>
+    <script src="js/parser.js?v=29"></script>
+    <script src="js/charts.js?v=29"></script>
+    <script src="js/app.js?v=29"></script>
     <script>
         if ('serviceWorker' in navigator) {
             navigator.serviceWorker.register('./sw.js');

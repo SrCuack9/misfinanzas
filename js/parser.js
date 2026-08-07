@@ -132,14 +132,21 @@ function parseSabadell(workbook) {
         });
     }
 
-    // If this is the savings account, don't import its movements as
-    // income/expenses (they're internal transfers from the checking account).
-    // Just report its balance so the "Cuenta Ahorro" card updates automatically.
-    if (isSabadellSavings(allConcepts)) {
-        return { transactions: [], accountNumber, isSavings: true, savingsBalance: latestBalance, latestDate: latestTxDate };
-    }
-
-    return { transactions, accountNumber, sabadellBalance: latestBalance, latestDate: latestTxDate };
+    // La decisión de si esta cuenta es la de ahorro se toma fuera, consolidando
+    // TODOS los extractos de un mismo número de cuenta: un extracto suelto puede
+    // no tener movimientos de REDONDEO y engañar a la heurística.
+    const looksLikeSavings = isSabadellSavings(allConcepts);
+    return {
+        transactions,
+        accountNumber,
+        balance: latestBalance,
+        looksLikeSavings,
+        latestDate: latestTxDate,
+        // Compatibilidad con el flujo anterior:
+        isSavings: looksLikeSavings,
+        savingsBalance: looksLikeSavings ? latestBalance : null,
+        sabadellBalance: looksLikeSavings ? null : latestBalance,
+    };
 }
 
 function parseMyInvestor(workbook) {
@@ -530,7 +537,9 @@ function extractBalancesOnly(arrayBuffer) {
         let sabadellBalance = null;
         let savingsBalance = null;
         let myinvestorBalance = null;
-        let latestDate = null; // fecha del movimiento más reciente del extracto
+        let latestDate = null;      // fecha del movimiento más reciente del extracto
+        let rawBalance = null;      // saldo sin decidir a qué cuenta pertenece
+        let looksLikeSavings = false;
 
         if (source === 'sabadell') {
             let dataStarted = false;
@@ -560,11 +569,12 @@ function extractBalancesOnly(arrayBuffer) {
                 }
             }
             latestDate = firstDate;
-            if (isSabadellSavings(concepts)) {
-                savingsBalance = firstBalance;
-            } else {
-                sabadellBalance = firstBalance;
-            }
+            rawBalance = firstBalance;
+            looksLikeSavings = isSabadellSavings(concepts);
+            // Reparto provisional; quien llama puede reasignar con el tipo real
+            // de la cuenta (consolidado por número de cuenta).
+            if (looksLikeSavings) savingsBalance = firstBalance;
+            else sabadellBalance = firstBalance;
         } else if (source === 'myinvestor') {
             for (let i = 0; i < rows.length; i++) {
                 const row = rows[i];
@@ -580,10 +590,12 @@ function extractBalancesOnly(arrayBuffer) {
         }
 
         return { source, accountNumber, sabadellBalance, savingsBalance, myinvestorBalance,
-                 abancaBalance: null, traderepublicBalance: null, latestDate };
+                 abancaBalance: null, traderepublicBalance: null, latestDate,
+                 rawBalance, looksLikeSavings };
     } catch (err) {
         console.error('extractBalancesOnly error:', err);
         return { source: 'unknown', accountNumber: '', sabadellBalance: null, savingsBalance: null,
-                 myinvestorBalance: null, abancaBalance: null, traderepublicBalance: null, latestDate: null };
+                 myinvestorBalance: null, abancaBalance: null, traderepublicBalance: null, latestDate: null,
+                 rawBalance: null, looksLikeSavings: false };
     }
 }

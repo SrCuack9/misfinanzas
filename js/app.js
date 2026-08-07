@@ -168,6 +168,33 @@ async function scanFolder() {
     }
 }
 
+// Normaliza un IBAN/número de cuenta para usarlo como clave.
+function accountKey(acc) {
+    return (acc || '').replace(/\s+/g, '').toUpperCase();
+}
+
+// Decide qué número de cuenta es el de AHORRO consolidando todos los extractos:
+// basta con que UNO de ellos tenga movimientos de ahorro automático para
+// clasificar esa cuenta entera. Así un extracto suelto sin REDONDEO (p. ej. el
+// del ingreso inicial) ya no se confunde con la cuenta corriente.
+// El resultado se recuerda entre sesiones en el ajuste 'account_types'.
+async function resolveAccountTypes(infos) {
+    const stored = await getSetting('account_types') || {};
+    const types = { ...stored };
+    for (const info of infos) {
+        const key = accountKey(info.accountNumber);
+        if (!key || info.source !== 'sabadell') continue;
+        if (info.looksLikeSavings) types[key] = 'savings';
+        else if (!types[key]) types[key] = 'checking';
+    }
+    await saveSetting('account_types', types);
+    return types;
+}
+
+function isSavingsAccount(types, accountNumber) {
+    return types[accountKey(accountNumber)] === 'savings';
+}
+
 async function refreshBalancesFromFiles(files) {
     // Para cada tipo de cuenta, gana el saldo del extracto con la FECHA DE
     // MOVIMIENTO más reciente (no la fecha del archivo). Así, añadir extractos
@@ -180,28 +207,36 @@ async function refreshBalancesFromFiles(files) {
         traderepublic: { date: '', bal: null },
     };
 
+    // 1ª pasada: leer todos los extractos.
+    const infos = [];
     for (const f of files) {
         try {
             const buf = await (await fetch(`/api/extracto/${encodeURIComponent(f.name)}`)).arrayBuffer();
-            const info = extractBalancesOnly(buf);
-            const d = info.latestDate || '';
-            if (info.sabadellBalance !== null && d >= best.sabadell.date) {
-                best.sabadell = { date: d, bal: info.sabadellBalance, acct: info.accountNumber || best.sabadell.acct };
-            }
-            if (info.savingsBalance !== null && d >= best.savings.date) {
-                best.savings = { date: d, bal: info.savingsBalance };
-            }
-            if (info.myinvestorBalance !== null && d >= best.myinvestor.date) {
-                best.myinvestor = { date: d, bal: info.myinvestorBalance };
-            }
-            if (info.abancaBalance !== null && info.abancaBalance !== undefined && d >= best.abanca.date) {
-                best.abanca = { date: d, bal: info.abancaBalance };
-            }
-            if (info.traderepublicBalance !== null && info.traderepublicBalance !== undefined && d >= best.traderepublic.date) {
-                best.traderepublic = { date: d, bal: info.traderepublicBalance };
-            }
+            infos.push({ name: f.name, ...extractBalancesOnly(buf) });
         } catch (err) {
-            console.error(`Error refreshing balance from ${f.name}:`, err);
+            console.error(`Error leyendo ${f.name}:`, err);
+        }
+    }
+
+    // 2ª pasada: con las cuentas ya clasificadas, asignar cada saldo a su cuenta.
+    const types = await resolveAccountTypes(infos);
+    for (const info of infos) {
+        const d = info.latestDate || '';
+        if (info.source === 'sabadell' && info.rawBalance !== null && info.rawBalance !== undefined) {
+            if (isSavingsAccount(types, info.accountNumber)) {
+                if (d >= best.savings.date) best.savings = { date: d, bal: info.rawBalance };
+            } else if (d >= best.sabadell.date) {
+                best.sabadell = { date: d, bal: info.rawBalance, acct: info.accountNumber || best.sabadell.acct };
+            }
+        }
+        if (info.myinvestorBalance !== null && d >= best.myinvestor.date) {
+            best.myinvestor = { date: d, bal: info.myinvestorBalance };
+        }
+        if (info.abancaBalance !== null && info.abancaBalance !== undefined && d >= best.abanca.date) {
+            best.abanca = { date: d, bal: info.abancaBalance };
+        }
+        if (info.traderepublicBalance !== null && info.traderepublicBalance !== undefined && d >= best.traderepublic.date) {
+            best.traderepublic = { date: d, bal: info.traderepublicBalance };
         }
     }
 
@@ -213,6 +248,12 @@ async function refreshBalancesFromFiles(files) {
     if (best.myinvestor.bal !== null) await saveSetting('myinvestor_balance', best.myinvestor.bal);
     if (best.abanca.bal !== null) await saveSetting('abanca_balance', best.abanca.bal);
     if (best.traderepublic.bal !== null) await saveSetting('traderepublic_balance', best.traderepublic.bal);
+
+    // Fecha del extracto del que sale cada saldo (se muestra en Cuentas).
+    await saveSetting('balance_dates', {
+        sabadell: best.sabadell.date, savings: best.savings.date,
+        abanca: best.abanca.date, traderepublic: best.traderepublic.date,
+    });
     console.log('Balances refreshed (latest by tx date):', best);
 }
 
@@ -232,32 +273,46 @@ async function importNewFiles(files, importedSet) {
     let trDate = '';
     const newFileNames = [];
 
+    // 1ª pasada: parsear todos los ficheros nuevos.
+    const parsed = [];
     for (const f of files) {
         if (importedSet.has(f.name)) continue;
         newFileNames.push(f.name);
-
         statusEl.innerHTML = `<span class="status-info">Importando ${escapeHtml(f.name)}...</span>`;
-
         try {
             const resp = await fetch(`/api/extracto/${encodeURIComponent(f.name)}`);
             const buf = await resp.arrayBuffer();
-            const result = parseArrayBuffer(buf);
-            const d = result.latestDate || '';
-
-            allParsed.push(...result.transactions);
-            if (result.funds) allFunds.push(...result.funds);
-            if (result.accountBalance) myinvestorBalance = result.accountBalance;
-            // Entre extractos del mismo tipo, gana el de fecha de movimiento más reciente.
-            if (result.abancaBalance != null && d >= abancaDate) { abancaBalance = result.abancaBalance; abancaDate = d; }
-            if (result.traderepublicBalance != null && d >= trDate) { traderepublicBalance = result.traderepublicBalance; trDate = d; }
-            if (result.isSavings) {
-                if (result.savingsBalance != null && d >= savingsDate) { savingsBalance = result.savingsBalance; savingsDate = d; }
-            } else if (result.sabadellBalance != null && d >= sabadellDate) {
-                sabadellBalance = result.sabadellBalance; sabadellDate = d;
-                if (result.accountNumber) accountNum = result.accountNumber;
-            }
+            parsed.push({ name: f.name, ...parseArrayBuffer(buf) });
         } catch (err) {
             console.error(`Error parsing ${f.name}:`, err);
+        }
+    }
+
+    // 2ª pasada: clasificar cuentas (corriente vs ahorro) y repartir saldos.
+    const types = await resolveAccountTypes(
+        parsed.map(p => ({ source: p.detectedSource, accountNumber: p.accountNumber, looksLikeSavings: p.looksLikeSavings }))
+    );
+
+    for (const result of parsed) {
+        const d = result.latestDate || '';
+        const isSavingsAcc = result.detectedSource === 'sabadell' && isSavingsAccount(types, result.accountNumber);
+
+        // Los movimientos de la cuenta de ahorro no se importan: son traspasos
+        // desde la corriente, ya reflejados allí.
+        if (!isSavingsAcc) allParsed.push(...result.transactions);
+        if (result.funds) allFunds.push(...result.funds);
+        if (result.accountBalance) myinvestorBalance = result.accountBalance;
+
+        // Entre extractos de la misma cuenta gana el de movimiento más reciente.
+        if (result.abancaBalance != null && d >= abancaDate) { abancaBalance = result.abancaBalance; abancaDate = d; }
+        if (result.traderepublicBalance != null && d >= trDate) { traderepublicBalance = result.traderepublicBalance; trDate = d; }
+        if (result.detectedSource === 'sabadell' && result.balance != null) {
+            if (isSavingsAcc) {
+                if (d >= savingsDate) { savingsBalance = result.balance; savingsDate = d; }
+            } else if (d >= sabadellDate) {
+                sabadellBalance = result.balance; sabadellDate = d;
+                if (result.accountNumber) accountNum = result.accountNumber;
+            }
         }
     }
 
@@ -335,24 +390,35 @@ async function handleFiles(files) {
     let abancaDate = '';
     let trDate = '';
 
+    const parsed = [];
     for (const file of files) {
         try {
-            const result = await parseFile(file);
-            const d = result.latestDate || '';
-            allParsed.push(...result.transactions);
-            if (result.funds) allFunds.push(...result.funds);
-            if (result.accountBalance) myinvestorBalance = result.accountBalance;
-            if (result.abancaBalance != null && d >= abancaDate) { abancaBalance = result.abancaBalance; abancaDate = d; }
-            if (result.traderepublicBalance != null && d >= trDate) { traderepublicBalance = result.traderepublicBalance; trDate = d; }
-            if (result.isSavings) {
-                if (result.savingsBalance != null && d >= savingsDate) { savingsBalance = result.savingsBalance; savingsDate = d; }
-            } else if (result.sabadellBalance != null && d >= sabadellDate) {
-                sabadellBalance = result.sabadellBalance; sabadellDate = d;
-                if (result.accountNumber) accountNum = result.accountNumber;
-            }
+            parsed.push(await parseFile(file));
         } catch (err) {
             console.error('Error parsing file:', err);
             alert(`Error al leer ${file.name}: ${err.message}`);
+        }
+    }
+
+    const types = await resolveAccountTypes(
+        parsed.map(p => ({ source: p.detectedSource, accountNumber: p.accountNumber, looksLikeSavings: p.looksLikeSavings }))
+    );
+
+    for (const result of parsed) {
+        const d = result.latestDate || '';
+        const isSavingsAcc = result.detectedSource === 'sabadell' && isSavingsAccount(types, result.accountNumber);
+        if (!isSavingsAcc) allParsed.push(...result.transactions);
+        if (result.funds) allFunds.push(...result.funds);
+        if (result.accountBalance) myinvestorBalance = result.accountBalance;
+        if (result.abancaBalance != null && d >= abancaDate) { abancaBalance = result.abancaBalance; abancaDate = d; }
+        if (result.traderepublicBalance != null && d >= trDate) { traderepublicBalance = result.traderepublicBalance; trDate = d; }
+        if (result.detectedSource === 'sabadell' && result.balance != null) {
+            if (isSavingsAcc) {
+                if (d >= savingsDate) { savingsBalance = result.balance; savingsDate = d; }
+            } else if (d >= sabadellDate) {
+                sabadellBalance = result.balance; sabadellDate = d;
+                if (result.accountNumber) accountNum = result.accountNumber;
+            }
         }
     }
 
@@ -529,6 +595,24 @@ document.getElementById('savings-update-btn').addEventListener('click', async ()
         document.getElementById('savings-input').value = '';
         refreshDashboard();
     }
+});
+
+document.getElementById('btn-recalc-balances').addEventListener('click', async (e) => {
+    const btn = e.target;
+    const original = btn.textContent;
+    btn.textContent = 'Recalculando...';
+    btn.disabled = true;
+    try {
+        const resp = await fetch('/api/extractos', { cache: 'no-store' });
+        if (!resp.ok) throw new Error('sin servidor');
+        await refreshBalancesFromFiles(await resp.json());
+        await refreshAccounts();
+        refreshDashboard();
+        btn.textContent = 'Saldos actualizados ✓';
+    } catch (err) {
+        btn.textContent = 'Solo disponible en el ordenador';
+    }
+    setTimeout(() => { btn.textContent = original; btn.disabled = false; }, 2500);
 });
 
 document.getElementById('abanca-update-btn').addEventListener('click', async () => {
@@ -1622,6 +1706,14 @@ async function refreshAccounts() {
     const abanca = await getSetting('abanca_balance') || 0;
     document.getElementById('abanca-balance').textContent = formatCurrency(abanca);
 
+    // Fecha del extracto del que sale cada saldo (transparencia: así se ve
+    // enseguida si un saldo se quedó anticuado).
+    const bd = await getSetting('balance_dates') || {};
+    const dateLabel = (d) => d ? `Saldo a ${formatDateDisplay(d)}` : '';
+    document.getElementById('sabadell-date').textContent = dateLabel(bd.sabadell);
+    document.getElementById('savings-date').textContent = dateLabel(bd.savings);
+    document.getElementById('abanca-date').textContent = dateLabel(bd.abanca);
+
     const nw = await getNetWorth();
     document.getElementById('traderepublic-balance').textContent = formatCurrency(nw.tr);
     document.getElementById('traderepublic-detail').textContent = nw.trFunds > 0
@@ -2040,6 +2132,22 @@ function escapeHtml(str) {
             console.log('Datos cargados por sincronización (modo móvil).');
         } catch (e) {
             console.error('Auto-sincronización falló:', e);
+        }
+    }
+
+    // Al abrir la app en el PC, recalcular los saldos desde los extractos de la
+    // carpeta. Así un saldo mal guardado por una versión anterior se corrige solo,
+    // sin tener que entrar en la pestaña Extractos.
+    if (hasServer) {
+        try {
+            const resp = await fetch('/api/extractos', { cache: 'no-store' });
+            if (resp.ok) {
+                await refreshBalancesFromFiles(await resp.json());
+                if (currentView === 'accounts') await refreshAccounts();
+                refreshDashboard();
+            }
+        } catch (err) {
+            console.error('No se pudieron recalcular los saldos al arrancar:', err);
         }
     }
 
