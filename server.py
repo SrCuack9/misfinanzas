@@ -80,12 +80,19 @@ def push_snapshot_to_gist(content_str):
 
 
 class MisFinanzasHandler(http.server.SimpleHTTPRequestHandler):
-    # HTTP/1.1: algunos navegadores no registran el Service Worker si el script
-    # se sirve por HTTP/1.0.
-    protocol_version = 'HTTP/1.1'
-
+    # Se mantiene HTTP/1.0 (el valor por defecto): con HTTP/1.1 este servidor
+    # sencillo reutiliza conexiones y aparecen cuelgues y ERR_CONNECTION_RESET.
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=BASE_DIR, **kwargs)
+
+    def send_json(self, code, payload):
+        body = json.dumps(payload).encode('utf-8')
+        self.send_response(code)
+        self.send_header('Content-Type', 'application/json')
+        self.send_header('Content-Length', str(len(body)))
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.end_headers()
+        self.wfile.write(body)
 
     def do_GET(self):
         if self.path == '/api/extractos':
@@ -117,11 +124,7 @@ class MisFinanzasHandler(http.server.SimpleHTTPRequestHandler):
             else:
                 result['gist_error'] = info
 
-            self.send_response(200)
-            self.send_header('Content-Type', 'application/json')
-            self.send_header('Access-Control-Allow-Origin', '*')
-            self.end_headers()
-            self.wfile.write(json.dumps(result).encode())
+            self.send_json(200, result)
         except Exception as e:
             self.send_error(500, str(e))
 
@@ -139,11 +142,7 @@ class MisFinanzasHandler(http.server.SimpleHTTPRequestHandler):
                         'modified': stat.st_mtime,
                     })
         files.sort(key=lambda f: f['modified'], reverse=True)
-        self.send_response(200)
-        self.send_header('Content-Type', 'application/json')
-        self.send_header('Access-Control-Allow-Origin', '*')
-        self.end_headers()
-        self.wfile.write(json.dumps(files).encode())
+        self.send_json(200, files)
 
     def send_extracto_file(self):
         filename = self.path.split('/api/extracto/', 1)[1]

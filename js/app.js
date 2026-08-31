@@ -2201,16 +2201,16 @@ function escapeHtml(str) {
         console.log('Cuentas Sabadell marcadas como cerradas.');
     }
 
-    // Trade Republic a 30/08/2026 según su extracto PDF (el CSV que hay en la
-    // carpeta solo llega al 06/08). Se marca como saldo manual para que no lo
-    // pise el CSV antiguo; en cuanto se exporte un CSV más reciente, mandará él.
-    if (!(await getSetting('tr_update_2026_08_30'))) {
-        await saveSetting('traderepublic_balance', 4883.78);
+    // Ya existe un CSV completo de Trade Republic, así que su saldo vuelve a
+    // calcularse solo: se retira la marca de "saldo manual" que se puso cuando
+    // únicamente teníamos el PDF.
+    if (!(await getSetting('tr_manual_cleared'))) {
         const manual = await getSetting('manual_balance_dates') || {};
-        manual.traderepublic = '2026-08-30';
-        await saveSetting('manual_balance_dates', manual);
-        await saveSetting('tr_update_2026_08_30', true);
-        console.log('Trade Republic actualizado a 4883,78 (extracto PDF 30/08).');
+        if (manual.traderepublic) {
+            delete manual.traderepublic;
+            await saveSetting('manual_balance_dates', manual);
+        }
+        await saveSetting('tr_manual_cleared', true);
     }
 
     // Puesta al día de MyInvestor (agosto 2026): efectivo y fondos declarados a mano,

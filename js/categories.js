@@ -73,7 +73,7 @@ const CATEGORY_RULES = [
     { pattern: /Illycaffe/i, category: 'restaurantes', subcategory: 'Illy Caffè' },
 
     // Delivery
-    { pattern: /JustEat/i, category: 'restaurantes', subcategory: 'Just Eat' },
+    { pattern: /JUST\s?EAT/i, category: 'restaurantes', subcategory: 'Just Eat' },
     { pattern: /Glovo/i, category: 'restaurantes', subcategory: 'Glovo' },
 
     // Gasolina
