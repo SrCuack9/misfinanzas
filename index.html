@@ -7,7 +7,7 @@
     <link rel="manifest" href="manifest.json">
     <meta name="theme-color" content="#f3f5f9">
     <link rel="icon" type="image/svg+xml" href="icon.svg">
-    <link rel="stylesheet" href="styles.css?v=32">
+    <link rel="stylesheet" href="styles.css?v=33">
 </head>
 <body>
     <div id="app">
@@ -259,6 +259,10 @@
                         </div>
                     </div>
                 </div>
+                <p class="closed-accounts-note" id="closed-accounts-note" hidden>
+                    <span id="closed-accounts-text"></span>
+                    <button class="link-btn" id="btn-toggle-closed">Mostrar</button>
+                </p>
             </section>
 
             <!-- UPLOAD VIEW -->
@@ -354,13 +358,13 @@
 
     <script src="lib/xlsx.full.min.js"></script>
     <script src="lib/chart.umd.min.js"></script>
-    <script src="js/categories.js?v=32"></script>
-    <script src="js/private.rules.js?v=32" onerror="console.log('Sin reglas privadas (modo público/móvil)')"></script>
-    <script src="js/crypto.js?v=32"></script>
-    <script src="js/db.js?v=32"></script>
-    <script src="js/parser.js?v=32"></script>
-    <script src="js/charts.js?v=32"></script>
-    <script src="js/app.js?v=32"></script>
+    <script src="js/categories.js?v=33"></script>
+    <script src="js/private.rules.js?v=33" onerror="console.log('Sin reglas privadas (modo público/móvil)')"></script>
+    <script src="js/crypto.js?v=33"></script>
+    <script src="js/db.js?v=33"></script>
+    <script src="js/parser.js?v=33"></script>
+    <script src="js/charts.js?v=33"></script>
+    <script src="js/app.js?v=33"></script>
     <script>
         if ('serviceWorker' in navigator) {
             navigator.serviceWorker.register('./sw.js');

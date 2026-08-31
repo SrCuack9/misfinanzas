@@ -209,6 +209,9 @@ window.toggleAccountClosed = async function(id) {
     refreshDashboard();
 };
 
+// Si se muestran o no las tarjetas de las cuentas ya cerradas.
+let showClosedAccounts = false;
+
 // Normaliza un IBAN/número de cuenta para usarlo como clave.
 function accountKey(acc) {
     return (acc || '').replace(/\s+/g, '').toUpperCase();
@@ -660,6 +663,11 @@ document.getElementById('savings-update-btn').addEventListener('click', async ()
         document.getElementById('savings-input').value = '';
         refreshDashboard();
     }
+});
+
+document.getElementById('btn-toggle-closed').addEventListener('click', async () => {
+    showClosedAccounts = !showClosedAccounts;
+    await refreshAccounts();
 });
 
 document.getElementById('btn-recalc-balances').addEventListener('click', async (e) => {
@@ -1792,8 +1800,11 @@ async function refreshAccounts() {
     document.getElementById('savings-date').textContent = dateLabel(bd.savings);
     document.getElementById('abanca-date').textContent = dateLabel(bd.abanca);
 
-    // Marcar visualmente las cuentas cerradas.
+    // Las cuentas cerradas se ocultan de la cuadrícula (siguen accesibles desde
+    // el enlace de abajo por si alguna vez hay que reabrir una).
     const closedList = await getClosedAccounts();
+    const closedNames = { sabadell: 'Sabadell corriente', savings: 'Ahorro Sabadell' };
+    const closedHere = [];
     for (const id of ['sabadell', 'savings']) {
         const card = document.getElementById('card-' + id);
         const tag = document.getElementById('tag-' + id);
@@ -1804,9 +1815,19 @@ async function refreshAccounts() {
         if (tag) tag.hidden = !isClosed;
         if (btn) btn.textContent = isClosed ? 'Reabrir cuenta' : 'Marcar como cerrada';
         if (isClosed) {
+            closedHere.push(closedNames[id] || id);
             document.getElementById(id + '-balance').textContent = formatCurrency(0);
             document.getElementById(id + '-date').textContent = 'Cuenta cerrada';
         }
+        card.hidden = isClosed && !showClosedAccounts;
+    }
+
+    const note = document.getElementById('closed-accounts-note');
+    if (note) {
+        note.hidden = closedHere.length === 0;
+        document.getElementById('closed-accounts-text').textContent =
+            `${closedHere.length} cuenta${closedHere.length === 1 ? '' : 's'} cerrada${closedHere.length === 1 ? '' : 's'}: ${closedHere.join(', ')}.`;
+        document.getElementById('btn-toggle-closed').textContent = showClosedAccounts ? 'Ocultar' : 'Mostrar';
     }
 
     const nw = await getNetWorth();
