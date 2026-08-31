@@ -7,7 +7,7 @@
     <link rel="manifest" href="manifest.json">
     <meta name="theme-color" content="#f3f5f9">
     <link rel="icon" type="image/svg+xml" href="icon.svg">
-    <link rel="stylesheet" href="styles.css?v=29">
+    <link rel="stylesheet" href="styles.css?v=31">
 </head>
 <body>
     <div id="app">
@@ -186,15 +186,17 @@
                         <span class="networth-label">Patrimonio total</span>
                         <span class="networth-value" id="networth-total">0,00 €</span>
                         <button id="btn-recalc-balances" class="btn-secondary btn-small" style="margin-top:8px">Recalcular saldos desde extractos</button>
+                        <span class="recalc-status" id="recalc-status"></span>
                     </div>
                     <div class="networth-breakdown" id="networth-breakdown"></div>
                 </div>
                 <div class="accounts-grid">
-                    <div class="account-card">
-                        <h3>Sabadell · Corriente</h3>
+                    <div class="account-card" id="card-sabadell">
+                        <h3>Sabadell · Corriente <span class="closed-tag" id="tag-sabadell" hidden>Cerrada</span></h3>
                         <p class="account-number" id="sabadell-account"></p>
                         <p class="account-balance" id="sabadell-balance">0,00 €</p>
                         <p class="account-detail" id="sabadell-date"></p>
+                        <button class="btn-secondary btn-small" onclick="toggleAccountClosed('sabadell')" id="close-sabadell">Marcar como cerrada</button>
                     </div>
                     <div class="account-card">
                         <h3>Abanca · Corriente</h3>
@@ -207,16 +209,17 @@
                             <button id="abanca-update-btn" class="btn-primary">Actualizar</button>
                         </div>
                     </div>
-                    <div class="account-card">
-                        <h3>Cuenta Ahorro</h3>
-                        <p class="account-detail">Ahorro Sabadell</p>
-                        <p class="account-balance" id="savings-balance">3.501,81 €</p>
+                    <div class="account-card" id="card-savings">
+                        <h3>Cuenta Ahorro <span class="closed-tag" id="tag-savings" hidden>Cerrada</span></h3>
+                        <p class="account-detail" id="savings-subtitle">Cuenta de ahorro</p>
+                        <p class="account-balance" id="savings-balance">0,00 €</p>
                         <p class="account-detail" id="savings-date"></p>
                         <div class="savings-edit">
                             <label>Actualizar saldo:</label>
                             <input type="number" id="savings-input" step="0.01" placeholder="Nuevo saldo">
                             <button id="savings-update-btn" class="btn-primary">Actualizar</button>
                         </div>
+                        <button class="btn-secondary btn-small" style="margin-top:10px" onclick="toggleAccountClosed('savings')" id="close-savings">Marcar como cerrada</button>
                     </div>
                     <div class="account-card">
                         <h3>Trade Republic</h3>
@@ -351,13 +354,13 @@
 
     <script src="lib/xlsx.full.min.js"></script>
     <script src="lib/chart.umd.min.js"></script>
-    <script src="js/categories.js?v=29"></script>
-    <script src="js/private.rules.js?v=29" onerror="console.log('Sin reglas privadas (modo público/móvil)')"></script>
-    <script src="js/crypto.js?v=29"></script>
-    <script src="js/db.js?v=29"></script>
-    <script src="js/parser.js?v=29"></script>
-    <script src="js/charts.js?v=29"></script>
-    <script src="js/app.js?v=29"></script>
+    <script src="js/categories.js?v=31"></script>
+    <script src="js/private.rules.js?v=31" onerror="console.log('Sin reglas privadas (modo público/móvil)')"></script>
+    <script src="js/crypto.js?v=31"></script>
+    <script src="js/db.js?v=31"></script>
+    <script src="js/parser.js?v=31"></script>
+    <script src="js/charts.js?v=31"></script>
+    <script src="js/app.js?v=31"></script>
     <script>
         if ('serviceWorker' in navigator) {
             navigator.serviceWorker.register('./sw.js');

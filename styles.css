@@ -966,3 +966,15 @@ nav { display: flex; gap: 4px; flex-wrap: wrap; }
     .stats-row { font-size: 0.85rem; padding: 9px 12px; }
     .filters-bar select { flex: 1; min-width: 0; }
 }
+
+/* Cuentas cerradas y estado del recálculo */
+.account-closed { opacity: 0.55; background: var(--bg-secondary); }
+.account-closed .account-balance { color: var(--text-secondary); }
+.closed-tag {
+    font-size: 0.68rem; font-weight: 700; padding: 2px 9px; border-radius: 999px;
+    background: var(--bg-secondary); color: var(--text-secondary);
+    border: 1px solid var(--border); vertical-align: middle; margin-left: 6px;
+}
+.recalc-status { display: block; font-size: 0.75rem; margin-top: 6px; max-width: 460px; }
+.recalc-status.ok { color: var(--accent-green); }
+.recalc-status.err { color: var(--accent-red); }

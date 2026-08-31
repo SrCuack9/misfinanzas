@@ -80,6 +80,10 @@ def push_snapshot_to_gist(content_str):
 
 
 class MisFinanzasHandler(http.server.SimpleHTTPRequestHandler):
+    # HTTP/1.1: algunos navegadores no registran el Service Worker si el script
+    # se sirve por HTTP/1.0.
+    protocol_version = 'HTTP/1.1'
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=BASE_DIR, **kwargs)
 

@@ -168,6 +168,47 @@ async function scanFolder() {
     }
 }
 
+// ==================== CUENTAS CERRADAS ====================
+// Una cuenta cerrada no cuenta en el patrimonio y NUNCA se auto-actualiza desde
+// los extractos (si no, un extracto antiguo le devolvería su último saldo).
+let closedAccounts = null;
+
+async function getClosedAccounts() {
+    if (closedAccounts === null) closedAccounts = await getSetting('closed_accounts') || [];
+    return closedAccounts;
+}
+
+async function isAccountClosed(id) {
+    return (await getClosedAccounts()).includes(id);
+}
+
+// Guarda un saldo puesto a mano y recuerda CUÁNDO se puso, para que el
+// recálculo automático no lo machaque con un extracto más antiguo.
+async function saveManualBalance(id, key, value) {
+    await saveSetting(key, value);
+    const manual = await getSetting('manual_balance_dates') || {};
+    manual[id] = new Date().toISOString().substring(0, 10);
+    await saveSetting('manual_balance_dates', manual);
+}
+
+window.toggleAccountClosed = async function(id) {
+    const closed = await getClosedAccounts();
+    const i = closed.indexOf(id);
+    if (i >= 0) {
+        closed.splice(i, 1);
+    } else {
+        closed.push(id);
+        // Al cerrarla, su saldo pasa a 0: el dinero ya no está ahí.
+        const key = { sabadell: 'sabadell_balance', savings: 'savings_balance',
+                      abanca: 'abanca_balance', traderepublic: 'traderepublic_balance' }[id];
+        if (key) await saveSetting(key, 0);
+    }
+    closedAccounts = closed;
+    await saveSetting('closed_accounts', closed);
+    await refreshAccounts();
+    refreshDashboard();
+};
+
 // Normaliza un IBAN/número de cuenta para usarlo como clave.
 function accountKey(acc) {
     return (acc || '').replace(/\s+/g, '').toUpperCase();
@@ -240,14 +281,37 @@ async function refreshBalancesFromFiles(files) {
         }
     }
 
-    if (best.sabadell.bal !== null) {
+    // Las cuentas cerradas no se tocan: su saldo real es 0 aunque los extractos
+    // antiguos digan otra cosa. Y un saldo puesto a mano solo se sustituye si
+    // el extracto es MÁS RECIENTE que la edición manual.
+    const closed = await getClosedAccounts();
+    const manualDates = await getSetting('manual_balance_dates') || {};
+    const applied = [];
+    const skipped = [];
+    const canApply = (id, extractDate) => {
+        if (closed.includes(id)) return false;
+        const m = manualDates[id];
+        if (m && (!extractDate || extractDate < m)) { skipped.push(id); return false; }
+        return true;
+    };
+    if (best.sabadell.bal !== null && canApply('sabadell', best.sabadell.date)) {
         if (best.sabadell.acct) await saveSetting('sabadell_account', best.sabadell.acct);
         await saveSetting('sabadell_balance', best.sabadell.bal);
+        applied.push(`Sabadell ${formatCurrency(best.sabadell.bal)}`);
     }
-    if (best.savings.bal !== null) await saveSetting('savings_balance', best.savings.bal);
+    if (best.savings.bal !== null && canApply('savings', best.savings.date)) {
+        await saveSetting('savings_balance', best.savings.bal);
+        applied.push(`Ahorro ${formatCurrency(best.savings.bal)}`);
+    }
     if (best.myinvestor.bal !== null) await saveSetting('myinvestor_balance', best.myinvestor.bal);
-    if (best.abanca.bal !== null) await saveSetting('abanca_balance', best.abanca.bal);
-    if (best.traderepublic.bal !== null) await saveSetting('traderepublic_balance', best.traderepublic.bal);
+    if (best.abanca.bal !== null && canApply('abanca', best.abanca.date)) {
+        await saveSetting('abanca_balance', best.abanca.bal);
+        applied.push(`Abanca ${formatCurrency(best.abanca.bal)}`);
+    }
+    if (best.traderepublic.bal !== null && canApply('traderepublic', best.traderepublic.date)) {
+        await saveSetting('traderepublic_balance', best.traderepublic.bal);
+        applied.push(`Trade Republic ${formatCurrency(best.traderepublic.bal)}`);
+    }
 
     // Fecha del extracto del que sale cada saldo (se muestra en Cuentas).
     await saveSetting('balance_dates', {
@@ -255,6 +319,7 @@ async function refreshBalancesFromFiles(files) {
         abanca: best.abanca.date, traderepublic: best.traderepublic.date,
     });
     console.log('Balances refreshed (latest by tx date):', best);
+    return { applied, skipped };
 }
 
 async function importNewFiles(files, importedSet) {
@@ -590,7 +655,7 @@ function closeModal() {
 document.getElementById('savings-update-btn').addEventListener('click', async () => {
     const val = parseFloat(document.getElementById('savings-input').value);
     if (!isNaN(val) && val >= 0) {
-        await saveSetting('savings_balance', val);
+        await saveManualBalance('savings', 'savings_balance', val);
         document.getElementById('savings-balance').textContent = formatCurrency(val);
         document.getElementById('savings-input').value = '';
         refreshDashboard();
@@ -598,27 +663,38 @@ document.getElementById('savings-update-btn').addEventListener('click', async ()
 });
 
 document.getElementById('btn-recalc-balances').addEventListener('click', async (e) => {
-    const btn = e.target;
+    const btn = e.currentTarget;
+    const statusEl = document.getElementById('recalc-status');
     const original = btn.textContent;
     btn.textContent = 'Recalculando...';
     btn.disabled = true;
+    statusEl.textContent = '';
+    statusEl.className = 'recalc-status';
     try {
         const resp = await fetch('/api/extractos', { cache: 'no-store' });
-        if (!resp.ok) throw new Error('sin servidor');
-        await refreshBalancesFromFiles(await resp.json());
+        if (!resp.ok) throw new Error('El servidor no responde');
+        const files = await resp.json();
+        const { applied, skipped } = await refreshBalancesFromFiles(files);
         await refreshAccounts();
         refreshDashboard();
-        btn.textContent = 'Saldos actualizados ✓';
+        statusEl.className = 'recalc-status ok';
+        let msg = applied.length
+            ? `Leídos ${files.length} extractos → ${applied.join(' · ')}`
+            : `Leídos ${files.length} extractos. Ningún saldo ha cambiado.`;
+        if (skipped.length) msg += ` (Se respetan los saldos que pusiste a mano: ${skipped.join(', ')}.)`;
+        statusEl.textContent = msg;
     } catch (err) {
-        btn.textContent = 'Solo disponible en el ordenador';
+        statusEl.className = 'recalc-status err';
+        statusEl.textContent = `No se pudo: ${err.message}. Esto solo funciona en el ordenador, con MisFinanzas.bat abierto.`;
     }
-    setTimeout(() => { btn.textContent = original; btn.disabled = false; }, 2500);
+    btn.textContent = original;
+    btn.disabled = false;
 });
 
 document.getElementById('abanca-update-btn').addEventListener('click', async () => {
     const val = parseFloat(document.getElementById('abanca-input').value);
     if (isNaN(val) || val < 0) return;
-    await saveSetting('abanca_balance', val);
+    await saveManualBalance('abanca', 'abanca_balance', val);
     document.getElementById('abanca-input').value = '';
     await refreshAccounts();
     refreshDashboard();
@@ -627,7 +703,7 @@ document.getElementById('abanca-update-btn').addEventListener('click', async () 
 document.getElementById('traderepublic-update-btn').addEventListener('click', async () => {
     const val = parseFloat(document.getElementById('traderepublic-input').value);
     if (isNaN(val) || val < 0) return;
-    await saveSetting('traderepublic_balance', val);
+    await saveManualBalance('traderepublic', 'traderepublic_balance', val);
     document.getElementById('traderepublic-input').value = '';
     await refreshAccounts();
     refreshDashboard();
@@ -1035,10 +1111,12 @@ async function getMyInvestorTotal() {
 
 // Patrimonio total = cuentas corrientes + ahorro + Trade Republic + MyInvestor.
 async function getNetWorth() {
-    const sabadell = await getSetting('sabadell_balance') || 0;
-    const abanca = await getSetting('abanca_balance') || 0;
-    const savings = await getSetting('savings_balance') || 0;
-    const trCash = await getSetting('traderepublic_balance') || 0;
+    const closed = await getClosedAccounts();
+    const val = async (id, key) => closed.includes(id) ? 0 : (await getSetting(key) || 0);
+    const sabadell = await val('sabadell', 'sabadell_balance');
+    const abanca = await val('abanca', 'abanca_balance');
+    const savings = await val('savings', 'savings_balance');
+    const trCash = await val('traderepublic', 'traderepublic_balance');
     const funds = await getAllFunds();
     const trFunds = funds.filter(f => f.broker === 'traderepublic')
         .reduce((s, f) => s + (f.currentValue != null ? f.currentValue : (f.totalInvested || 0)), 0);
@@ -1700,7 +1778,7 @@ async function refreshAccounts() {
         document.getElementById('sabadell-balance').textContent = formatCurrency(sabBalance);
     }
 
-    const savings = await getSetting('savings_balance') || 3501.81;
+    const savings = await getSetting('savings_balance') || 0;
     document.getElementById('savings-balance').textContent = formatCurrency(savings);
 
     const abanca = await getSetting('abanca_balance') || 0;
@@ -1713,6 +1791,23 @@ async function refreshAccounts() {
     document.getElementById('sabadell-date').textContent = dateLabel(bd.sabadell);
     document.getElementById('savings-date').textContent = dateLabel(bd.savings);
     document.getElementById('abanca-date').textContent = dateLabel(bd.abanca);
+
+    // Marcar visualmente las cuentas cerradas.
+    const closedList = await getClosedAccounts();
+    for (const id of ['sabadell', 'savings']) {
+        const card = document.getElementById('card-' + id);
+        const tag = document.getElementById('tag-' + id);
+        const btn = document.getElementById('close-' + id);
+        if (!card) continue;
+        const isClosed = closedList.includes(id);
+        card.classList.toggle('account-closed', isClosed);
+        if (tag) tag.hidden = !isClosed;
+        if (btn) btn.textContent = isClosed ? 'Reabrir cuenta' : 'Marcar como cerrada';
+        if (isClosed) {
+            document.getElementById(id + '-balance').textContent = formatCurrency(0);
+            document.getElementById(id + '-date').textContent = 'Cuenta cerrada';
+        }
+    }
 
     const nw = await getNetWorth();
     document.getElementById('traderepublic-balance').textContent = formatCurrency(nw.tr);
@@ -1727,12 +1822,16 @@ async function refreshAccounts() {
 
     // Banner de patrimonio total
     document.getElementById('networth-total').textContent = formatCurrency(nw.total);
-    document.getElementById('networth-breakdown').innerHTML = `
-        <div class="nw-item"><span>Sabadell</span><strong>${formatCurrency(nw.sabadell)}</strong></div>
-        <div class="nw-item"><span>Abanca</span><strong>${formatCurrency(nw.abanca)}</strong></div>
-        <div class="nw-item"><span>Ahorro</span><strong>${formatCurrency(nw.savings)}</strong></div>
-        <div class="nw-item"><span>Trade Republic</span><strong>${formatCurrency(nw.tr)}</strong></div>
-        <div class="nw-item"><span>MyInvestor</span><strong>${formatCurrency(nw.mi)}</strong></div>`;
+    // En el desglose solo aparecen las cuentas abiertas (o con saldo).
+    const nwItems = [
+        { id: 'sabadell', label: 'Sabadell', val: nw.sabadell },
+        { id: 'abanca', label: 'Abanca', val: nw.abanca },
+        { id: 'savings', label: 'Ahorro', val: nw.savings },
+        { id: 'traderepublic', label: 'Trade Republic', val: nw.tr },
+        { id: 'myinvestor', label: 'MyInvestor', val: nw.mi },
+    ].filter(it => !closedList.includes(it.id));
+    document.getElementById('networth-breakdown').innerHTML = nwItems.map(it =>
+        `<div class="nw-item"><span>${it.label}</span><strong>${formatCurrency(it.val)}</strong></div>`).join('');
 
     document.getElementById('myinvestor-balance').textContent = formatCurrency(mi.total);
     document.getElementById('myinvestor-breakdown').textContent =
@@ -2085,6 +2184,33 @@ function escapeHtml(str) {
     const tr = await getSetting('traderepublic_balance');
     if (tr === null || tr === undefined) {
         await saveSetting('traderepublic_balance', 0);
+    }
+
+    // Cuentas Sabadell cerradas (agosto 2026): el usuario se pasó a Abanca.
+    // Se marcan una sola vez; puede reabrirlas desde Cuentas si hiciera falta.
+    if (!(await getSetting('sabadell_closed_2026_08'))) {
+        const closed = await getSetting('closed_accounts') || [];
+        for (const id of ['sabadell', 'savings']) {
+            if (!closed.includes(id)) closed.push(id);
+        }
+        closedAccounts = closed;
+        await saveSetting('closed_accounts', closed);
+        await saveSetting('sabadell_balance', 0);
+        await saveSetting('savings_balance', 0);
+        await saveSetting('sabadell_closed_2026_08', true);
+        console.log('Cuentas Sabadell marcadas como cerradas.');
+    }
+
+    // Trade Republic a 30/08/2026 según su extracto PDF (el CSV que hay en la
+    // carpeta solo llega al 06/08). Se marca como saldo manual para que no lo
+    // pise el CSV antiguo; en cuanto se exporte un CSV más reciente, mandará él.
+    if (!(await getSetting('tr_update_2026_08_30'))) {
+        await saveSetting('traderepublic_balance', 4883.78);
+        const manual = await getSetting('manual_balance_dates') || {};
+        manual.traderepublic = '2026-08-30';
+        await saveSetting('manual_balance_dates', manual);
+        await saveSetting('tr_update_2026_08_30', true);
+        console.log('Trade Republic actualizado a 4883,78 (extracto PDF 30/08).');
     }
 
     // Puesta al día de MyInvestor (agosto 2026): efectivo y fondos declarados a mano,

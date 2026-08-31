@@ -143,7 +143,7 @@ const CATEGORY_RULES = [
 
     // ---- Comida rápida / Fast food (Restaurantes) ----
     { pattern: /MC\s?DONALD|MCDONALD|MACDONALD|\bMCD\b/i, category: 'restaurantes', subcategory: "McDonald's" },
-    { pattern: /BURGER KING|\bBK\b/i, category: 'restaurantes', subcategory: 'Burger King' },
+    { pattern: /BURGER KING|\bBK\b|\bBK\d{3,}/i, category: 'restaurantes', subcategory: 'Burger King' },
     { pattern: /\bKFC\b/i, category: 'restaurantes', subcategory: 'KFC' },
     { pattern: /TELEPIZZA/i, category: 'restaurantes', subcategory: 'Telepizza' },
     { pattern: /DOMINO/i, category: 'restaurantes', subcategory: "Domino's Pizza" },
@@ -170,8 +170,12 @@ const CATEGORY_RULES = [
     { pattern: /UBER\s?EATS/i, category: 'restaurantes', subcategory: 'Uber Eats' },
     { pattern: /DELIVEROO/i, category: 'restaurantes', subcategory: 'Deliveroo' },
 
-    // ---- Traspasos sin concepto (Abanca) ----
+    // ---- Traspasos entre cuentas propias ----
     { pattern: /^TRASPASO SIN CONCEPTO$/i, category: 'traspaso', subcategory: 'Entre cuentas propias' },
+    // Abanca manda a su cuenta de ahorro con el concepto "AHORROS"
+    { pattern: /^AHORROS$/i, category: 'traspaso', subcategory: 'A cuenta de ahorro' },
+    // Bonificación por domiciliar la nómina: es un ingreso real
+    { pattern: /BONIFICACION CAMPA|BONIFICACIÓN CAMPA|FIDELIZACION|FIDELIZACIÓN/i, category: 'otros_ingresos', subcategory: 'Bonificación banco' },
 
     // ---- Efectivo ----
     { pattern: /REINTEGRO CAJERO|DISPOSICION CAJERO|RETIRADA EFECTIVO|CAJERO AUTOMATICO/i, category: 'efectivo', subcategory: 'Cajero' },
