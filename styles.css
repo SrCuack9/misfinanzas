@@ -928,11 +928,19 @@ nav { display: flex; gap: 4px; flex-wrap: wrap; }
         flex: 1;
         flex-direction: column;
         gap: 3px;
-        padding: 5px 2px;
+        padding: 5px 1px;
         border-radius: 12px;
-        font-size: 0.58rem;
+        font-size: 0.54rem;
         font-weight: 600;
         min-width: 0;
+        overflow: hidden;
+    }
+    .nav-btn .nav-label {
+        max-width: 100%;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        letter-spacing: -0.02em;
     }
     .nav-btn .nav-icon { width: 21px; height: 21px; }
     .nav-btn.active {
@@ -989,3 +997,11 @@ nav { display: flex; gap: 4px; flex-wrap: wrap; }
     font: inherit; font-weight: 600; cursor: pointer; padding: 0; text-decoration: underline;
 }
 .link-btn:hover { color: var(--primary-dark); }
+
+/* Gráfica de patrimonio */
+.chart-note { font-size: 0.8rem; color: var(--text-secondary); margin: -8px 0 14px; }
+.networth-legend-help { font-size: 0.72rem; color: var(--text-secondary); text-align: center; margin-top: 10px; }
+#chart-networth { max-height: 420px; }
+@media (max-width: 768px) {
+    #chart-networth { max-height: 320px; }
+}

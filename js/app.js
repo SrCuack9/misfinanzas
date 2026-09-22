@@ -1293,6 +1293,15 @@ window.selectStatsCategory = function(catId) {
 function refreshStats() {
     const year = document.getElementById('stats-year').value;
     const catId = document.getElementById('stats-category').value;
+
+    // El patrimonio es una foto global: solo se muestra en la vista "Todas".
+    const nwBlock = document.getElementById('networth-chart-block');
+    if (nwBlock) {
+        const showNw = (catId === 'all');
+        nwBlock.hidden = !showNw;
+        if (showNw) renderNetWorthSection();
+        else destroyNetWorthChart();
+    }
     // Cancelaciones fuera; los ocultos SÍ cuentan (igual que en el dashboard).
     const scoped = getFilteredTransactions({ year, month: 'all' }).filter(t => !refundedIds.has(t.id));
     const summaryEl = document.getElementById('stats-summary');
@@ -1421,6 +1430,95 @@ function refreshStats() {
 
     chartTitle.textContent = `Evolución mensual — ${info.label}`;
     renderStatsChart('chart-stats', months.map(monthLabelOf), perMonth, info.color, isInc ? 'Ingresos' : 'Gastos', avg);
+}
+
+// ==================== HISTÓRICO DE PATRIMONIO ====================
+
+// La app solo guarda los saldos de HOY, no un histórico. Pero el patrimonio de
+// un mes pasado se puede reconstruir hacia atrás: es el de hoy menos todo lo que
+// ha entrado y salido desde entonces.
+//
+//     P(fin de mes M) = P(hoy) − Σ(movimientos posteriores a M)
+//
+// Se cuentan TODOS los movimientos que mueven dinero dentro o fuera del
+// patrimonio (incluidos los Bizum, que sí cambian lo que tienes aunque no sean
+// ingreso ni gasto). Quedan fuera los traspasos entre cuentas propias y los
+// pares compra+devolución, porque no cambian el total.
+async function computeNetWorthHistory() {
+    const nw = await getNetWorth();
+    const funds = await getAllFunds();
+    const invested = funds.reduce((s, f) => s + (f.totalInvested || 0), 0);
+    const fundsValue = funds.reduce((s, f) => s + (f.currentValue != null ? f.currentValue : (f.totalInvested || 0)), 0);
+
+    const months = [...new Set(allTransactions.map(t => t.month))].sort();
+    if (months.length === 0) return null;
+
+    // Movimiento neto de cada mes (lo que hizo crecer o menguar el patrimonio).
+    const netByMonth = {}, incByMonth = {}, expByMonth = {};
+    for (const m of months) { netByMonth[m] = 0; incByMonth[m] = 0; expByMonth[m] = 0; }
+    for (const t of allTransactions) {
+        if (refundedIds.has(t.id)) continue;              // traspasos y cancelaciones
+        if (t.category === 'traspaso') continue;
+        netByMonth[t.month] += t.amount;
+        if (t.amount > 0 && isIncomeCategory(t.category)) incByMonth[t.month] += t.amount;
+        else if (t.amount < 0 && !isIncomeCategory(t.category) && !isNeutralCategory(t.category)) {
+            expByMonth[t.month] += Math.abs(t.amount);
+        }
+    }
+
+    // Recorrido hacia atrás desde el patrimonio actual.
+    const total = new Array(months.length);
+    let running = nw.total;
+    for (let i = months.length - 1; i >= 0; i--) {
+        total[i] = running;              // patrimonio al cerrar ese mes
+        running -= netByMonth[months[i]]; // deshacemos el mes para ir al anterior
+    }
+
+    // Lo invertido en fondos, acumulado por fecha de compra. Parte de lo
+    // invertido no tiene compras registradas (fondos metidos a mano): esa
+    // diferencia se toma como inversión ya existente al principio, para que la
+    // línea acabe justo en lo que hay invertido de verdad.
+    const purchases = [];
+    funds.forEach(f => (f.purchases || []).forEach(pch => purchases.push(pch)));
+    const purchasedTotal = purchases.reduce((sum, pch) => sum + pch.amount, 0);
+    const base = Math.max(0, invested - purchasedTotal);
+    const investedSeries = months.map(m =>
+        base + purchases.filter(pch => pch.date && pch.date.substring(0, 7) <= m)
+                        .reduce((sum, pch) => sum + pch.amount, 0));
+
+    // Lo que queda en cuentas: el patrimonio menos lo que está invertido.
+    const cashSeries = total.map((v, i) => v - investedSeries[i]);
+
+    return {
+        months,
+        total,
+        income: months.map(m => incByMonth[m]),
+        expense: months.map(m => expByMonth[m]),
+        net: months.map(m => netByMonth[m]),
+        investedSeries,
+        cashSeries,
+        invested, fundsValue,
+        currentTotal: nw.total,
+    };
+}
+
+async function renderNetWorthSection() {
+    const note = document.getElementById('networth-chart-note');
+    const h = await computeNetWorthHistory();
+    if (!h) {
+        if (note) note.textContent = 'Aún no hay movimientos para reconstruir el patrimonio.';
+        destroyNetWorthChart();
+        return;
+    }
+    // Solo tiene sentido dibujar desde que hay datos razonables.
+    const labels = h.months.map(monthLabelOf);
+    const primero = h.total[0], ultimo = h.total[h.total.length - 1];
+    const dif = ultimo - primero;
+    if (note) {
+        note.innerHTML = `Reconstruido a partir de tus movimientos desde el patrimonio actual de <strong>${formatCurrency(h.currentTotal)}</strong>. ` +
+            `Desde ${labels[0]} ${dif >= 0 ? 'has ganado' : 'has perdido'} <strong class="${dif >= 0 ? 'positive' : 'negative'}">${formatCurrency(Math.abs(dif))}</strong>.`;
+    }
+    renderNetWorthChart('chart-networth', labels, h);
 }
 
 // ==================== ANÁLISIS ====================

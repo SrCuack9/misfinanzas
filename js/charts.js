@@ -84,6 +84,149 @@ function renderStatsChart(canvasId, labels, values, color, seriesLabel, avg) {
     });
 }
 
+// Evolución del patrimonio: una línea gruesa con el total y, debajo, el
+// desglose. Los ingresos y gastos del mes van en un eje propio a la derecha,
+// porque son flujos mensuales y aplastarían la escala del patrimonio.
+let netWorthChart = null;
+
+function destroyNetWorthChart() {
+    if (netWorthChart) { netWorthChart.destroy(); netWorthChart = null; }
+}
+
+// En pantallas estrechas los importes largos se comen el ancho del gráfico.
+function compactEuro(v, compact) {
+    if (!compact) return formatCurrency(v);
+    const abs = Math.abs(v);
+    if (abs >= 1000) return (v / 1000).toFixed(abs >= 10000 ? 0 : 1).replace('.', ',') + 'k €';
+    return Math.round(v) + ' €';
+}
+
+function renderNetWorthChart(canvasId, labels, h) {
+    const canvas = document.getElementById(canvasId);
+    if (!canvas) return;
+    destroyNetWorthChart();
+    const isNarrow = window.innerWidth <= 768;
+
+    const datasets = [
+        {
+            label: 'Patrimonio total',
+            type: 'line',
+            data: h.total,
+            borderColor: '#4f46e5',
+            backgroundColor: 'rgba(79,70,229,0.12)',
+            borderWidth: 3,
+            pointRadius: 2,
+            pointHoverRadius: 5,
+            fill: true,
+            tension: 0.25,
+            yAxisID: 'y',
+            order: 1,
+        },
+    ];
+
+    if (h.cashSeries) {
+        datasets.push({
+            label: 'En cuentas (líquido)',
+            type: 'line',
+            data: h.cashSeries,
+            borderColor: '#0369a1',
+            backgroundColor: 'transparent',
+            borderWidth: 2,
+            pointRadius: 0,
+            tension: 0.25,
+            yAxisID: 'y',
+            order: 2,
+        });
+    }
+    if (h.investedSeries) {
+        datasets.push({
+            label: 'Invertido en fondos',
+            type: 'line',
+            data: h.investedSeries,
+            borderColor: '#0d9488',
+            backgroundColor: 'transparent',
+            borderWidth: 2,
+            pointRadius: 0,
+            tension: 0.25,
+            yAxisID: 'y',
+            order: 3,
+        });
+    }
+
+    datasets.push(
+        {
+            label: 'Ingresos del mes',
+            type: 'line',
+            data: h.income,
+            borderColor: '#0e9f6e',
+            backgroundColor: 'transparent',
+            borderWidth: 2,
+            borderDash: [5, 4],
+            pointRadius: 0,
+            tension: 0.25,
+            yAxisID: 'y2',
+            order: 3,
+        },
+        {
+            label: 'Gastos del mes',
+            type: 'line',
+            data: h.expense,
+            borderColor: '#e02d51',
+            backgroundColor: 'transparent',
+            borderWidth: 2,
+            borderDash: [5, 4],
+            pointRadius: 0,
+            tension: 0.25,
+            yAxisID: 'y2',
+            order: 4,
+        },
+        {
+            label: 'Ahorro del mes',
+            data: h.net,
+            type: 'bar',
+            backgroundColor: h.net.map(v => v >= 0 ? 'rgba(14,159,110,0.35)' : 'rgba(224,45,81,0.35)'),
+            borderWidth: 0,
+            yAxisID: 'y2',
+            order: 5,
+        }
+    );
+
+    netWorthChart = new Chart(canvas, {
+        type: 'bar',
+        data: { labels, datasets },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
+            plugins: {
+                legend: { labels: { usePointStyle: true, pointStyle: 'circle', padding: 14 } },
+                tooltip: {
+                    ...LIGHT_TOOLTIP,
+                    callbacks: { label: (ctx) => `${ctx.dataset.label}: ${formatCurrency(ctx.raw)}` },
+                },
+            },
+            scales: {
+                y: {
+                    position: 'left',
+                    title: { display: !isNarrow, text: 'Patrimonio' },
+                    ticks: { callback: (v) => compactEuro(v, isNarrow) },
+                    grid: { color: '#eceff5' },
+                },
+                y2: {
+                    position: 'right',
+                    title: { display: !isNarrow, text: 'Movimiento del mes' },
+                    ticks: { callback: (v) => compactEuro(v, isNarrow) },
+                    grid: { display: false },
+                },
+                x: {
+                    grid: { display: false },
+                    ticks: { maxTicksLimit: isNarrow ? 6 : 14, autoSkip: true },
+                },
+            },
+        },
+    });
+}
+
 // Gráfico de barras agrupadas para comparar dos periodos por categoría.
 function renderComparisonChart(canvasId, labels, seriesA, seriesB, nameA, nameB) {
     const canvas = document.getElementById(canvasId);

@@ -7,7 +7,7 @@
     <link rel="manifest" href="manifest.json">
     <meta name="theme-color" content="#f3f5f9">
     <link rel="icon" type="image/svg+xml" href="icon.svg">
-    <link rel="stylesheet" href="styles.css?v=33">
+    <link rel="stylesheet" href="styles.css?v=37">
 </head>
 <body>
     <div id="app">
@@ -145,6 +145,17 @@
                 <div class="filters-bar">
                     <select id="stats-year"></select>
                     <select id="stats-category"></select>
+                </div>
+
+                <div id="networth-chart-block">
+                    <div class="chart-container chart-wide">
+                        <h3>Evolución de tu patrimonio</h3>
+                        <p class="chart-note" id="networth-chart-note"></p>
+                        <canvas id="chart-networth"></canvas>
+                        <div class="networth-legend-help">
+                            Toca cualquier nombre de la leyenda para mostrar u ocultar esa línea.
+                        </div>
+                    </div>
                 </div>
 
                 <div id="stats-summary"></div>
@@ -358,13 +369,13 @@
 
     <script src="lib/xlsx.full.min.js"></script>
     <script src="lib/chart.umd.min.js"></script>
-    <script src="js/categories.js?v=33"></script>
-    <script src="js/private.rules.js?v=33" onerror="console.log('Sin reglas privadas (modo público/móvil)')"></script>
-    <script src="js/crypto.js?v=33"></script>
-    <script src="js/db.js?v=33"></script>
-    <script src="js/parser.js?v=33"></script>
-    <script src="js/charts.js?v=33"></script>
-    <script src="js/app.js?v=33"></script>
+    <script src="js/categories.js?v=37"></script>
+    <script src="js/private.rules.js?v=37" onerror="console.log('Sin reglas privadas (modo público/móvil)')"></script>
+    <script src="js/crypto.js?v=37"></script>
+    <script src="js/db.js?v=37"></script>
+    <script src="js/parser.js?v=37"></script>
+    <script src="js/charts.js?v=37"></script>
+    <script src="js/app.js?v=37"></script>
     <script>
         if ('serviceWorker' in navigator) {
             navigator.serviceWorker.register('./sw.js');
