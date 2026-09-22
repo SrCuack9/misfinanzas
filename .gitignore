@@ -9,3 +9,4 @@ js/private.rules.js
 *.bak
 MisFinanzas.bat
 __pycache__/
+*.lnk
