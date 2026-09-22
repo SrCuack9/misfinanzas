@@ -1005,3 +1005,5 @@ nav { display: flex; gap: 4px; flex-wrap: wrap; }
 @media (max-width: 768px) {
     #chart-networth { max-height: 320px; }
 }
+
+.note-aside { opacity: 0.8; font-style: italic; }

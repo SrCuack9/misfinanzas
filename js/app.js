@@ -1299,7 +1299,7 @@ function refreshStats() {
     if (nwBlock) {
         const showNw = (catId === 'all');
         nwBlock.hidden = !showNw;
-        if (showNw) renderNetWorthSection();
+        if (showNw) renderNetWorthSection(year);
         else destroyNetWorthChart();
     }
     // Cancelaciones fuera; los ocultos SÍ cuentan (igual que en el dashboard).
@@ -1460,10 +1460,11 @@ async function computeNetWorthHistory() {
         if (refundedIds.has(t.id)) continue;              // traspasos y cancelaciones
         if (t.category === 'traspaso') continue;
         netByMonth[t.month] += t.amount;
-        if (t.amount > 0 && isIncomeCategory(t.category)) incByMonth[t.month] += t.amount;
-        else if (t.amount < 0 && !isIncomeCategory(t.category) && !isNeutralCategory(t.category)) {
-            expByMonth[t.month] += Math.abs(t.amount);
-        }
+        // Aquí SÍ entran los Bizum: son dinero que entra y sale de verdad, y así
+        // ingresos − gastos cuadra con lo que sube o baja el patrimonio. (En el
+        // Dashboard siguen aparte para no inflar los totales del día a día.)
+        if (t.amount > 0) incByMonth[t.month] += t.amount;
+        else expByMonth[t.month] += Math.abs(t.amount);
     }
 
     // Recorrido hacia atrás desde el patrimonio actual.
@@ -1502,21 +1503,47 @@ async function computeNetWorthHistory() {
     };
 }
 
-async function renderNetWorthSection() {
+async function renderNetWorthSection(year) {
     const note = document.getElementById('networth-chart-note');
-    const h = await computeNetWorthHistory();
-    if (!h) {
+    const full = await computeNetWorthHistory();
+    if (!full) {
         if (note) note.textContent = 'Aún no hay movimientos para reconstruir el patrimonio.';
         destroyNetWorthChart();
         return;
     }
-    // Solo tiene sentido dibujar desde que hay datos razonables.
+
+    // El patrimonio siempre se calcula con TODO el histórico (si no, saldría
+    // mal); el año elegido solo decide qué tramo se dibuja.
+    const keep = full.months.map((m, i) => ({ m, i }))
+                            .filter(({ m }) => year === 'all' || m.startsWith(year));
+    if (keep.length === 0) {
+        if (note) note.textContent = `No hay movimientos en ${year}.`;
+        destroyNetWorthChart();
+        return;
+    }
+    const pick = (arr) => keep.map(({ i }) => arr[i]);
+    const h = {
+        ...full,
+        months: pick(full.months),
+        total: pick(full.total),
+        income: pick(full.income),
+        expense: pick(full.expense),
+        net: pick(full.net),
+        investedSeries: pick(full.investedSeries),
+        cashSeries: pick(full.cashSeries),
+    };
+
     const labels = h.months.map(monthLabelOf);
-    const primero = h.total[0], ultimo = h.total[h.total.length - 1];
-    const dif = ultimo - primero;
+    // Punto de partida: el patrimonio al cerrar el mes anterior al tramo, para
+    // que "has ganado X" sea lo ganado DENTRO del periodo elegido.
+    const firstIdx = keep[0].i;
+    const inicio = firstIdx > 0 ? full.total[firstIdx - 1] : full.total[0] - full.net[0];
+    const dif = h.total[h.total.length - 1] - inicio;
     if (note) {
-        note.innerHTML = `Reconstruido a partir de tus movimientos desde el patrimonio actual de <strong>${formatCurrency(h.currentTotal)}</strong>. ` +
-            `Desde ${labels[0]} ${dif >= 0 ? 'has ganado' : 'has perdido'} <strong class="${dif >= 0 ? 'positive' : 'negative'}">${formatCurrency(Math.abs(dif))}</strong>.`;
+        const periodo = year === 'all' ? `desde ${labels[0]}` : `en ${year}`;
+        note.innerHTML = `Reconstruido a partir de tus movimientos, desde el patrimonio actual de <strong>${formatCurrency(h.currentTotal)}</strong>. ` +
+            `${dif >= 0 ? 'Has ganado' : 'Has perdido'} <strong class="${dif >= 0 ? 'positive' : 'negative'}">${formatCurrency(Math.abs(dif))}</strong> ${periodo}. ` +
+            `<span class="note-aside">Ingresos y gastos incluyen los Bizum.</span>`;
     }
     renderNetWorthChart('chart-networth', labels, h);
 }
