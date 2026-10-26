@@ -1007,3 +1007,19 @@ nav { display: flex; gap: 4px; flex-wrap: wrap; }
 }
 
 .note-aside { opacity: 0.8; font-style: italic; }
+
+/* Fondos de Trade Republic dentro de su tarjeta */
+.tr-funds { margin-top: 14px; }
+.tr-funds-head {
+    display: flex; justify-content: space-between; align-items: baseline;
+    padding-bottom: 6px; border-bottom: 1px solid var(--border);
+    font-size: 0.85rem; color: var(--text-secondary);
+}
+.tr-funds-head strong { color: var(--text-primary); font-size: 1rem; }
+.fund-line strong { font-size: 0.95rem; }
+.fund-figs { font-size: 0.78rem; color: var(--text-secondary); }
+.fund-total-gain { margin-top: 10px; font-size: 0.85rem; color: var(--text-secondary); }
+.manual-fix { margin-top: 14px; font-size: 0.8rem; color: var(--text-secondary); }
+.manual-fix summary { cursor: pointer; }
+.manual-fix .savings-edit { margin-top: 6px; }
+.file-detected.trpdf { background: #e2f7ef; color: #0b7f58; }

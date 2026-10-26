@@ -120,12 +120,14 @@ async function scanFolder() {
             if (nameLower.includes('sabadell') || nameLower.includes('gastos')) sourceGuess = 'sabadell';
             else if (nameLower.includes('myinvestor') || nameLower.includes('investor')) sourceGuess = 'myinvestor';
             else if (nameLower.startsWith('transactions_')) sourceGuess = 'traderepublic';
+            else if (nameLower.endsWith('.pdf')) sourceGuess = 'trpdf';
             else if (/^\d{8}_\d{4}_/.test(nameLower)) sourceGuess = 'sabadell';
             else if (nameLower.endsWith('.csv')) sourceGuess = 'abanca';
 
             const sourceLabel = sourceGuess === 'sabadell' ? 'Sabadell' :
                                 sourceGuess === 'myinvestor' ? 'MyInvestor' :
                                 sourceGuess === 'traderepublic' ? 'Trade Republic' :
+                                sourceGuess === 'trpdf' ? 'PDF · fondos' :
                                 sourceGuess === 'abanca' ? 'Abanca' : 'Auto-detectar';
             const sourceClass = sourceGuess;
 
@@ -246,17 +248,31 @@ async function refreshBalancesFromFiles(files) {
     const best = {
         sabadell: { date: '', bal: null, acct: '' },
         savings: { date: '', bal: null },
-        myinvestor: { date: '', bal: null },
         abanca: { date: '', bal: null },
         traderepublic: { date: '', bal: null },
     };
+    const notes = [];
 
-    // 1ª pasada: leer todos los extractos.
+    // 1ª pasada: leer todos los extractos. Los PDF los lee el servidor; de los
+    // CSV de Trade Republic se guardan todas las filas para unirlas.
     const infos = [];
+    const trRows = [];
+    let pdf = null;
     for (const f of files) {
         try {
+            if (f.name.toLowerCase().endsWith('.pdf')) {
+                const res = await (await fetch(`/api/pdftext/${encodeURIComponent(f.name)}`)).json();
+                if (res.error) { notes.push(`${f.name}: ${res.error}`); continue; }
+                const sec = parseTRSecuritiesText(res.text);
+                if (!sec) continue;                       // otro PDF (no es la cuenta de valores)
+                if (sec.error) { notes.push(`${f.name}: ${sec.error}`); continue; }
+                if (!pdf || (sec.date || '') > (pdf.date || '')) pdf = { ...sec, file: f.name };
+                continue;
+            }
             const buf = await (await fetch(`/api/extracto/${encodeURIComponent(f.name)}`)).arrayBuffer();
-            infos.push({ name: f.name, ...extractBalancesOnly(buf) });
+            const info = extractBalancesOnly(buf);
+            if (info.trRows) trRows.push(...info.trRows);
+            infos.push({ name: f.name, ...info });
         } catch (err) {
             console.error(`Error leyendo ${f.name}:`, err);
         }
@@ -273,15 +289,17 @@ async function refreshBalancesFromFiles(files) {
                 best.sabadell = { date: d, bal: info.rawBalance, acct: info.accountNumber || best.sabadell.acct };
             }
         }
-        if (info.myinvestorBalance !== null && d >= best.myinvestor.date) {
-            best.myinvestor = { date: d, bal: info.myinvestorBalance };
-        }
         if (info.abancaBalance !== null && info.abancaBalance !== undefined && d >= best.abanca.date) {
             best.abanca = { date: d, bal: info.abancaBalance };
         }
-        if (info.traderepublicBalance !== null && info.traderepublicBalance !== undefined && d >= best.traderepublic.date) {
-            best.traderepublic = { date: d, bal: info.traderepublicBalance };
-        }
+    }
+
+    // Trade Republic: todos sus CSV unidos (sin duplicar filas). El efectivo es
+    // la suma de toda la historia, así que no depende del tramo exportado.
+    let trMerged = null;
+    if (trRows.length) {
+        trMerged = buildTradeRepublic(trRows);
+        best.traderepublic = { date: trMerged.latestDate || '', bal: trMerged.traderepublicBalance };
     }
 
     // Las cuentas cerradas no se tocan: su saldo real es 0 aunque los extractos
@@ -306,7 +324,6 @@ async function refreshBalancesFromFiles(files) {
         await saveSetting('savings_balance', best.savings.bal);
         applied.push(`Ahorro ${formatCurrency(best.savings.bal)}`);
     }
-    if (best.myinvestor.bal !== null) await saveSetting('myinvestor_balance', best.myinvestor.bal);
     if (best.abanca.bal !== null && canApply('abanca', best.abanca.date)) {
         await saveSetting('abanca_balance', best.abanca.bal);
         applied.push(`Abanca ${formatCurrency(best.abanca.bal)}`);
@@ -316,13 +333,105 @@ async function refreshBalancesFromFiles(files) {
         applied.push(`Trade Republic ${formatCurrency(best.traderepublic.bal)}`);
     }
 
+    // Movimientos y fondos de Trade Republic, sincronizados con sus extractos.
+    if (trMerged) {
+        const sync = await syncTradeRepublic(trMerged, pdf);
+        notes.push(...sync.notes);
+        if (sync.fundsValue != null) applied.push(`fondos ${formatCurrency(sync.fundsValue)}${pdf ? ` (a ${formatDateDisplay(pdf.date)})` : ''}`);
+    }
+
     // Fecha del extracto del que sale cada saldo (se muestra en Cuentas).
     await saveSetting('balance_dates', {
         sabadell: best.sabadell.date, savings: best.savings.date,
         abanca: best.abanca.date, traderepublic: best.traderepublic.date,
+        funds: pdf ? pdf.date : null,
     });
     console.log('Balances refreshed (latest by tx date):', best);
-    return { applied, skipped };
+    return { applied, skipped, notes };
+}
+
+// Trade Republic se reconstruye entero desde sus extractos en cada lectura:
+// el CSV tiene toda la información (tipo de operación, descripción), así que
+// es la fuente de verdad. Se respeta lo que hayas tocado a mano.
+async function syncTradeRepublic(merged, pdf) {
+    const notes = [];
+
+    // --- 1) Movimientos
+    const parsedByHash = new Map(merged.transactions.map(t => [t.hash, t]));
+    const dbTR = (await getAllTransactions()).filter(t => t.source === 'traderepublic');
+    const dbHashes = new Set(dbTR.map(t => t.hash));
+    let changed = 0;
+    for (const t of dbTR) {
+        const p = parsedByHash.get(t.hash);
+        if (p) {
+            if (!t.manualCategory && (t.category !== p.category || t.subcategory !== p.subcategory)) {
+                await updateTransaction(t.id, { category: p.category, subcategory: p.subcategory });
+                changed++;
+            }
+        } else if (!t.manualCategory && !t.hidden) {
+            // Movimiento que ya no sale así en el extracto (versión anterior del lector).
+            await deleteTransaction(t.id);
+            changed++;
+        }
+    }
+    const toAdd = merged.transactions.filter(t => !dbHashes.has(t.hash));
+    if (toAdd.length) { await addTransactions(toAdd); changed += toAdd.length; }
+    if (changed) await reloadTransactions();
+
+    // --- 2) Fondos
+    let transferCost = await getSetting('fund_transfer_cost');
+    if (!transferCost && window.PRIVATE_FUND_TRANSFER_COST) {
+        transferCost = { ...window.PRIVATE_FUND_TRANSFER_COST };
+        await saveSetting('fund_transfer_cost', transferCost);
+    }
+    const { positions, events } = computeTRPositions(merged.trades, transferCost || {});
+    const pdfByIsin = {};
+    if (pdf) pdf.positions.forEach(q => { pdfByIsin[q.isin] = q; });
+
+    const existing = await getAllFunds();
+    const keep = new Set();
+    let fundsValue = 0;
+    for (const pos of positions) {
+        const q = pdfByIsin[pos.isin];
+        const prev = existing.find(f => f.name === pos.isin);
+        let value = prev ? prev.currentValue : null;
+        let price = prev ? prev.price : null;
+        let valueDate = prev ? prev.valueDate : null;
+        if (q) {
+            price = q.price;
+            valueDate = pdf.date;
+            // Mismos títulos que el PDF: su valor tal cual. Si después has
+            // comprado o vendido, precio del PDF × títulos actuales.
+            value = Math.abs(q.shares - pos.shares) < 1e-4
+                ? q.value
+                : Math.round(pos.shares * q.price * 100) / 100;
+            if (Math.abs(q.shares - pos.shares) >= 1e-4) {
+                notes.push(`${pos.name}: el PDF dice ${q.shares} títulos y los CSV ${pos.shares.toFixed(6)}; uso los del CSV.`);
+            }
+        }
+        await saveFund({
+            name: pos.isin, isin: pos.isin, broker: 'traderepublic',
+            displayName: pos.name || (q && q.name) || pos.isin,
+            shares: pos.shares,
+            totalInvested: pos.cost,
+            hasTransfer: pos.hasTransfer,
+            currentValue: value, price, valueDate,
+        });
+        keep.add(pos.isin);
+        fundsValue += value != null ? value : (pos.cost || 0);
+    }
+    // Fondos de Trade Republic que ya no tienes (vendidos) o guardados con el
+    // formato antiguo (por nombre en vez de por ISIN).
+    for (const f of existing) {
+        if (f.broker === 'traderepublic' && !keep.has(f.name)) await deleteFund(f.name);
+    }
+    await saveSetting('tr_fund_events', events);
+
+    if (pdf) {
+        const unknown = pdf.positions.filter(q => !keep.has(q.isin));
+        if (unknown.length) notes.push(`El PDF tiene fondos que no aparecen en tus CSV: ${unknown.map(q => q.name || q.isin).join(', ')}.`);
+    }
+    return { notes, fundsValue: positions.length ? Math.round(fundsValue * 100) / 100 : null };
 }
 
 async function importNewFiles(files, importedSet) {
@@ -346,6 +455,9 @@ async function importNewFiles(files, importedSet) {
     for (const f of files) {
         if (importedSet.has(f.name)) continue;
         newFileNames.push(f.name);
+        // El PDF de la cuenta de valores no trae movimientos: lo lee el
+        // recálculo de saldos, que corre justo después de importar.
+        if (f.name.toLowerCase().endsWith('.pdf')) continue;
         statusEl.innerHTML = `<span class="status-info">Importando ${escapeHtml(f.name)}...</span>`;
         try {
             const resp = await fetch(`/api/extracto/${encodeURIComponent(f.name)}`);
@@ -564,10 +676,6 @@ document.getElementById('btn-confirm-import').addEventListener('click', async ()
         await saveSetting('sabadell_account', pendingImport.accountNumber);
     }
 
-    if (pendingImport.myinvestorBalance) {
-        await saveSetting('myinvestor_balance', pendingImport.myinvestorBalance);
-    }
-
     if (pendingImport.sabadellBalance !== null && pendingImport.sabadellBalance !== undefined) {
         await saveSetting('sabadell_balance', pendingImport.sabadellBalance);
     }
@@ -584,32 +692,22 @@ document.getElementById('btn-confirm-import').addEventListener('click', async ()
         await saveSetting('traderepublic_balance', pendingImport.traderepublicBalance);
     }
 
-    if (pendingImport.funds) {
+    if (pendingImport.funds && pendingImport.funds.length) {
+        // Ya no hay fondos en MyInvestor: de sus extractos antiguos solo se
+        // guardan las fechas e importes de compra, para dibujar en la gráfica de
+        // patrimonio cuándo se fue invirtiendo. Los fondos de Trade Republic los
+        // crea el recálculo de saldos a partir de sus CSV y del PDF.
+        const legacy = await getSetting('legacy_fund_purchases') || [];
+        const seen = new Set(legacy.map(x => x.hash));
         for (const fund of pendingImport.funds) {
-            const existing = (await getAllFunds()).find(f => f.name === fund.name);
-            const existingPurchases = existing ? (existing.purchases || []) : [];
-            const existingHashes = new Set(existingPurchases.map(p => p.hash));
-
-            // Only add truly new purchases (deduplicate by hash)
-            const newPurchases = (fund.purchases || []).filter(p => !existingHashes.has(p.hash));
-            const allPurchases = [...existingPurchases, ...newPurchases];
-
-            // Si el usuario ha editado el fondo a mano, respetamos su importe invertido
-            // y su valor actual; solo actualizamos el registro de compras.
-            if (existing && existing.manualInvested) {
-                await saveFund({ ...existing, purchases: allPurchases });
-            } else {
-                const totalInvested = allPurchases.reduce((sum, p) => sum + p.amount, 0);
-                await saveFund({
-                    name: fund.name,
-                    purchases: allPurchases,
-                    totalInvested,
-                    currentValue: (existing && existing.currentValue) || fund.currentValue || null,
-                    // Conservar a qué bróker pertenece (MyInvestor o Trade Republic).
-                    broker: fund.broker || (existing && existing.broker) || undefined,
-                });
+            if (fund.broker === 'traderepublic') continue;
+            for (const pch of (fund.purchases || [])) {
+                if (pch.hash && seen.has(pch.hash)) continue;
+                legacy.push({ date: pch.date, amount: pch.amount, hash: pch.hash });
+                if (pch.hash) seen.add(pch.hash);
             }
         }
+        await saveSetting('legacy_fund_purchases', legacy);
     }
 
     if (pendingImport.fileNames) {
@@ -899,36 +997,6 @@ document.getElementById('btn-load-sync').addEventListener('click', async () => {
     }
 });
 
-// ==================== MYINVESTOR (manual) ====================
-
-document.getElementById('myinvestor-cash-btn').addEventListener('click', async () => {
-    const v = parseFloat(document.getElementById('myinvestor-cash-input').value);
-    if (isNaN(v) || v < 0) return;
-    await saveSetting('myinvestor_cash', v);
-    await refreshAccounts();
-    refreshDashboard();
-});
-
-document.getElementById('fund-add-btn').addEventListener('click', async () => {
-    const nameEl = document.getElementById('fund-add-name');
-    const invEl = document.getElementById('fund-add-invested');
-    const curEl = document.getElementById('fund-add-current');
-    const name = nameEl.value.trim();
-    if (!name) { nameEl.focus(); return; }
-
-    const existing = (await getAllFunds()).find(f => f.name.toLowerCase() === name.toLowerCase());
-    const fund = existing || { name, purchases: [], totalInvested: 0, currentValue: null };
-    const inv = parseFloat(invEl.value);
-    const cur = parseFloat(curEl.value);
-    if (!isNaN(inv)) { fund.totalInvested = inv; fund.manualInvested = true; }
-    if (!isNaN(cur)) fund.currentValue = cur;
-
-    await saveFund(fund);
-    nameEl.value = ''; invEl.value = ''; curEl.value = '';
-    await refreshAccounts();
-    refreshDashboard();
-});
-
 // ==================== DATA ====================
 
 const MONTH_NAMES = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
@@ -1106,18 +1174,7 @@ function reconcileInternalTransfers() {
 
 // ==================== DASHBOARD ====================
 
-// Resumen de MyInvestor: efectivo parado, invertido, valor actual y total.
-async function getMyInvestorTotal() {
-    let cash = await getSetting('myinvestor_cash');
-    if (cash === null || cash === undefined) cash = await getSetting('myinvestor_balance') || 0;
-    // Solo los fondos de MyInvestor: los de Trade Republic cuentan en su propia cuenta.
-    const funds = (await getAllFunds()).filter(f => f.broker !== 'traderepublic');
-    const fundsValue = funds.reduce((s, f) => s + (f.currentValue != null ? f.currentValue : (f.totalInvested || 0)), 0);
-    const invested = funds.reduce((s, f) => s + (f.totalInvested || 0), 0);
-    return { cash, fundsValue, invested, total: cash + fundsValue };
-}
-
-// Patrimonio total = cuentas corrientes + ahorro + Trade Republic + MyInvestor.
+// Patrimonio total = cuentas corrientes + ahorro + Trade Republic (efectivo y fondos).
 async function getNetWorth() {
     const closed = await getClosedAccounts();
     const val = async (id, key) => closed.includes(id) ? 0 : (await getSetting(key) || 0);
@@ -1125,15 +1182,14 @@ async function getNetWorth() {
     const abanca = await val('abanca', 'abanca_balance');
     const savings = await val('savings', 'savings_balance');
     const trCash = await val('traderepublic', 'traderepublic_balance');
-    const funds = await getAllFunds();
-    const trFunds = funds.filter(f => f.broker === 'traderepublic')
-        .reduce((s, f) => s + (f.currentValue != null ? f.currentValue : (f.totalInvested || 0)), 0);
+    const funds = (await getAllFunds()).filter(f => f.broker === 'traderepublic');
+    const trFunds = funds.reduce((s, f) => s + (f.currentValue != null ? f.currentValue : (f.totalInvested || 0)), 0);
+    const trInvested = funds.reduce((s, f) => s + (f.totalInvested || 0), 0);
     const tr = trCash + trFunds;
-    const mi = (await getMyInvestorTotal()).total;
     const checking = sabadell + abanca;
     // "Ahorro/inversión" agrupa todo lo que no es la cuenta corriente del día a día.
-    const savingsTotal = savings + tr + mi;
-    return { sabadell, abanca, checking, savings, tr, trCash, trFunds, mi, savingsTotal, total: checking + savingsTotal };
+    const savingsTotal = savings + tr;
+    return { sabadell, abanca, checking, savings, tr, trCash, trFunds, trInvested, savingsTotal, total: checking + savingsTotal };
 }
 
 async function refreshDashboard() {
@@ -1446,9 +1502,8 @@ function refreshStats() {
 // pares compra+devolución, porque no cambian el total.
 async function computeNetWorthHistory() {
     const nw = await getNetWorth();
-    const funds = await getAllFunds();
-    const invested = funds.reduce((s, f) => s + (f.totalInvested || 0), 0);
-    const fundsValue = funds.reduce((s, f) => s + (f.currentValue != null ? f.currentValue : (f.totalInvested || 0)), 0);
+    const invested = nw.trInvested;
+    const fundsValue = nw.trFunds;
 
     const months = [...new Set(allTransactions.map(t => t.month))].sort();
     if (months.length === 0) return null;
@@ -1479,8 +1534,12 @@ async function computeNetWorthHistory() {
     // invertido no tiene compras registradas (fondos metidos a mano): esa
     // diferencia se toma como inversión ya existente al principio, para que la
     // línea acabe justo en lo que hay invertido de verdad.
-    const purchases = [];
-    funds.forEach(f => (f.purchases || []).forEach(pch => purchases.push(pch)));
+    // Compras con fecha: las de Trade Republic (y sus ventas, en negativo) y
+    // las de los extractos antiguos de MyInvestor, de donde vienen los fondos.
+    const purchases = [
+        ...(await getSetting('tr_fund_events') || []),
+        ...(await getSetting('legacy_fund_purchases') || []),
+    ];
     const purchasedTotal = purchases.reduce((sum, pch) => sum + pch.amount, 0);
     const base = Math.max(0, invested - purchasedTotal);
     const investedSeries = months.map(m =>
@@ -1961,88 +2020,92 @@ async function refreshAccounts() {
         ? `${formatCurrency(nw.trCash)} efectivo · ${formatCurrency(nw.trFunds)} en fondos`
         : '';
 
-    const mi = await getMyInvestorTotal();
-    // En Cuentas solo se editan los fondos de MyInvestor (los de TR van solos).
-    const funds = (await getAllFunds()).filter(f => f.broker !== 'traderepublic');
-    accountsFunds = funds;
-
     // Banner de patrimonio total
     document.getElementById('networth-total').textContent = formatCurrency(nw.total);
-    // En el desglose solo aparecen las cuentas abiertas (o con saldo).
+    // En el desglose solo aparecen las cuentas abiertas.
     const nwItems = [
         { id: 'sabadell', label: 'Sabadell', val: nw.sabadell },
         { id: 'abanca', label: 'Abanca', val: nw.abanca },
         { id: 'savings', label: 'Ahorro', val: nw.savings },
         { id: 'traderepublic', label: 'Trade Republic', val: nw.tr },
-        { id: 'myinvestor', label: 'MyInvestor', val: nw.mi },
     ].filter(it => !closedList.includes(it.id));
     document.getElementById('networth-breakdown').innerHTML = nwItems.map(it =>
         `<div class="nw-item"><span>${it.label}</span><strong>${formatCurrency(it.val)}</strong></div>`).join('');
 
-    document.getElementById('myinvestor-balance').textContent = formatCurrency(mi.total);
-    document.getElementById('myinvestor-breakdown').textContent =
-        `${formatCurrency(mi.cash)} efectivo · ${formatCurrency(mi.fundsValue)} en fondos`;
-
-    const gain = mi.fundsValue - mi.invested;
-    document.getElementById('myinvestor-summary').innerHTML = `
-        <div class="mi-stat"><span>Efectivo parado</span><strong>${formatCurrency(mi.cash)}</strong></div>
-        <div class="mi-stat"><span>Invertido en fondos</span><strong>${formatCurrency(mi.invested)}</strong></div>
-        <div class="mi-stat"><span>Valor actual fondos</span><strong>${formatCurrency(mi.fundsValue)}</strong></div>
-        <div class="mi-stat"><span>Ganancia / pérdida</span><strong class="${gain >= 0 ? 'positive' : 'negative'}">${gain >= 0 ? '+' : ''}${formatCurrency(gain)}</strong></div>
-        <div class="mi-stat mi-stat-total"><span>Total MyInvestor</span><strong>${formatCurrency(mi.total)}</strong></div>`;
-
-    const cashInput = document.getElementById('myinvestor-cash-input');
-    cashInput.value = '';
-    cashInput.placeholder = formatCurrency(mi.cash);
-
-    const fundsList = document.getElementById('funds-list');
-    if (funds.length > 0) {
-        fundsList.innerHTML = funds.map((f, i) => {
-            const cur = (f.currentValue != null) ? f.currentValue : null;
-            const g = (cur != null) ? cur - (f.totalInvested || 0) : null;
-            return `<div class="fund-item-row">
-                <div class="fund-line">
-                    <span class="fund-name">${escapeHtml(f.name)}</span>
-                    <button class="cat-action-btn cat-action-del" title="Eliminar fondo" onclick="removeFund(${i})">&times;</button>
-                </div>
-                <div class="fund-figs">
-                    <span class="fund-invested">${formatCurrency(f.totalInvested || 0)} invertido</span>
-                    <span class="fund-current">${cur != null ? formatCurrency(cur) + ' actual' : 'valor sin definir'}</span>
-                    ${g != null ? `<span class="fund-gain ${g >= 0 ? 'positive' : 'negative'}">${g >= 0 ? '+' : ''}${formatCurrency(g)}</span>` : ''}
-                </div>
-                <div class="fund-edit-row">
-                    <input type="number" step="0.01" placeholder="Invertido €" class="fund-inv-input" data-idx="${i}">
-                    <input type="number" step="0.01" placeholder="Valor actual €" class="fund-cur-input" data-idx="${i}">
-                    <button class="btn-secondary btn-small" onclick="saveFundEdit(${i})">Actualizar</button>
-                </div>
-            </div>`;
-        }).join('');
-    } else {
-        fundsList.innerHTML = '<p class="empty-msg" style="padding:8px 0;text-align:left;font-size:0.85rem">Aún no hay fondos. Añade uno abajo o importa un extracto de MyInvestor.</p>';
-    }
+    await renderTRFunds();
 }
 
+// Fondos de Trade Republic: se leen solos (títulos del CSV, valor del PDF de la
+// cuenta de valores). Lo único editable es lo aportado en un traspaso, que el
+// CSV no trae.
 let accountsFunds = [];
 
-window.saveFundEdit = async function(i) {
-    const f = accountsFunds[i];
-    if (!f) return;
-    const invEl = document.querySelector(`.fund-inv-input[data-idx="${i}"]`);
-    const curEl = document.querySelector(`.fund-cur-input[data-idx="${i}"]`);
-    const inv = parseFloat(invEl.value);
-    const cur = parseFloat(curEl.value);
-    if (!isNaN(inv)) { f.totalInvested = inv; f.manualInvested = true; }
-    if (!isNaN(cur)) f.currentValue = cur;
-    await saveFund(f);
-    await refreshAccounts();
-};
+async function renderTRFunds() {
+    const funds = (await getAllFunds()).filter(f => f.broker === 'traderepublic')
+        .sort((a, b) => (b.currentValue || 0) - (a.currentValue || 0));
+    accountsFunds = funds;
+    const box = document.getElementById('tr-funds');
+    if (!box) return;
+    if (!funds.length) {
+        box.innerHTML = '<p class="empty-msg" style="padding:8px 0;text-align:left;font-size:0.85rem">Sin fondos. Se leen solos de tus CSV de Trade Republic y del PDF de la cuenta de valores.</p>';
+        return;
+    }
+    const value = funds.reduce((s, f) => s + (f.currentValue || 0), 0);
+    const known = funds.filter(f => f.totalInvested != null && f.currentValue != null);
+    const cost = known.reduce((s, f) => s + f.totalInvested, 0);
+    const gain = known.reduce((s, f) => s + f.currentValue - f.totalInvested, 0);
+    const dates = funds.map(f => f.valueDate).filter(Boolean).sort();
+    const asOf = dates.length ? dates[dates.length - 1] : null;
 
-window.removeFund = async function(i) {
+    box.innerHTML = `
+        <div class="tr-funds-head">
+            <span>Fondos indexados${asOf ? ` · valor a ${formatDateDisplay(asOf)}` : ''}</span>
+            <strong>${formatCurrency(value)}</strong>
+        </div>
+        ${funds.map((f, i) => {
+            const g = (f.totalInvested != null && f.currentValue != null) ? f.currentValue - f.totalInvested : null;
+            const pct = (g != null && f.totalInvested > 0) ? (g / f.totalInvested * 100) : null;
+            return `<div class="fund-item-row">
+                <div class="fund-line">
+                    <span class="fund-name">${escapeHtml(f.displayName || f.name)}</span>
+                    <strong>${f.currentValue != null ? formatCurrency(f.currentValue) : '—'}</strong>
+                </div>
+                <div class="fund-figs">
+                    <span>${(f.shares || 0).toLocaleString('es-ES', { maximumFractionDigits: 4 })} títulos${f.price ? ` × ${formatCurrency(f.price)}` : ''}</span>
+                    <span>aportado ${f.totalInvested != null ? formatCurrency(f.totalInvested) : 'desconocido'}${f.hasTransfer ? ` <button class="link-btn" onclick="editTransferCost(${i})">corregir</button>` : ''}</span>
+                    ${g != null ? `<span class="fund-gain ${g >= 0 ? 'positive' : 'negative'}">${g >= 0 ? '+' : ''}${formatCurrency(g)} (${pct >= 0 ? '+' : ''}${pct.toFixed(1)}%)</span>` : ''}
+                </div>
+            </div>`;
+        }).join('')}
+        ${known.length ? `<p class="fund-total-gain">Ganancia total: <strong class="${gain >= 0 ? 'positive' : 'negative'}">${gain >= 0 ? '+' : ''}${formatCurrency(gain)}</strong> sobre ${formatCurrency(cost)} aportados</p>` : ''}`;
+}
+
+// Lo aportado en un fondo que llegó por traspaso no viene en el CSV. Se guarda
+// solo la parte del traspaso: las compras que hagas después se siguen sumando.
+window.editTransferCost = async function(i) {
     const f = accountsFunds[i];
     if (!f) return;
-    if (!confirm(`¿Eliminar el fondo "${f.name}"?`)) return;
-    await deleteFund(f.name);
+    // El coste se recalcula con los CSV, que solo están en el ordenador.
+    let hasServer = false;
+    try { hasServer = (await fetch('/api/extractos', { cache: 'no-store' })).ok; } catch (e) { /* móvil */ }
+    if (!hasServer) {
+        alert('Esto se corrige desde el ordenador: allí están los extractos con los que se recalcula. Después llegará solo al móvil.');
+        return;
+    }
+    const input = prompt(`¿Cuánto llevabas aportado en "${f.displayName || f.name}" en total, contando el traspaso?`,
+        f.totalInvested != null ? String(f.totalInvested).replace('.', ',') : '');
+    if (input === null) return;
+    const total = parseFloat(input.replace(/\./g, '').replace(',', '.'));
+    if (isNaN(total) || total < 0) return;
+    const tc = await getSetting('fund_transfer_cost') || {};
+    // Parte del coste que no viene del traspaso (compras y ventas con dinero).
+    const fromCash = (f.totalInvested != null ? f.totalInvested : 0) - (tc[f.isin] || 0);
+    tc[f.isin] = Math.round((total - fromCash) * 100) / 100;
+    await saveSetting('fund_transfer_cost', tc);
+    // Recalcular con el nuevo coste.
+    await refreshBalancesFromFiles(await (await fetch('/api/extractos', { cache: 'no-store' })).json());
     await refreshAccounts();
+    refreshDashboard();
 };
 
 // ==================== DRILLDOWN & RECATEGORIZE ====================
@@ -2268,6 +2331,9 @@ function escapeHtml(str) {
             const txs = await getAllTransactions();
             let deleted = 0, updated = 0;
             for (const t of txs) {
+                // Trade Republic se reconstruye desde su CSV (sabe si una fila es
+                // un Bizum, un pago a un comercio...); el concepto solo no basta.
+                if (t.source === 'traderepublic') continue;
                 if (isInternalTransfer(t.concept)) {
                     await deleteTransaction(t.id);
                     deleted++;
@@ -2286,37 +2352,30 @@ function escapeHtml(str) {
         }
     }
 
-    // Migrate old fund format: if funds exist without purchases array, recalculate from extractos
-    const existingFunds = await getAllFunds();
-    const needsMigration = hasServer && existingFunds.some(f => !f.purchases);
-    if (needsMigration) {
+    // Adiós a MyInvestor (oct-2026): los fondos se traspasaron a Trade Republic.
+    // De los fondos antiguos se guardan sus compras con fecha (para la gráfica
+    // de patrimonio) y se borran; los nuevos los crea la lectura de los
+    // extractos de Trade Republic.
+    if (hasServer && !(await getSetting('myinvestor_retired_2026_10'))) {
         try {
-            const resp = await fetch('/api/extractos');
-            if (resp.ok) {
-                const files = await resp.json();
-                for (const f of files) {
-                    const fResp = await fetch(`/api/extracto/${encodeURIComponent(f.name)}`);
-                    const buf = await fResp.arrayBuffer();
-                    const source = detectSourceFromBuffer(buf);
-                    if (source === 'myinvestor') {
-                        const result = parseArrayBuffer(buf);
-                        if (result.funds) {
-                            for (const fund of result.funds) {
-                                const old = existingFunds.find(ef => ef.name === fund.name);
-                                await saveFund({
-                                    name: fund.name,
-                                    purchases: fund.purchases || [],
-                                    totalInvested: (fund.purchases || []).reduce((s, p) => s + p.amount, 0),
-                                    currentValue: (old && old.currentValue) || null,
-                                });
-                            }
-                        }
-                    }
+            const legacy = await getSetting('legacy_fund_purchases') || [];
+            const seen = new Set(legacy.map(x => x.hash).filter(Boolean));
+            for (const f of await getAllFunds()) {
+                if (f.broker === 'traderepublic') continue;
+                for (const pch of (f.purchases || [])) {
+                    if (pch.hash && seen.has(pch.hash)) continue;
+                    legacy.push({ date: pch.date, amount: pch.amount, hash: pch.hash });
+                    if (pch.hash) seen.add(pch.hash);
                 }
-                console.log('Funds migrated to new format');
+                await deleteFund(f.name);
             }
+            await saveSetting('legacy_fund_purchases', legacy);
+            await saveSetting('myinvestor_cash', null);
+            await saveSetting('myinvestor_balance', null);
+            await saveSetting('myinvestor_retired_2026_10', true);
+            console.log('MyInvestor retirado.');
         } catch (err) {
-            console.error('Fund migration error:', err);
+            console.error('Error retirando MyInvestor:', err);
         }
     }
 
@@ -2357,34 +2416,6 @@ function escapeHtml(str) {
             await saveSetting('manual_balance_dates', manual);
         }
         await saveSetting('tr_manual_cleared', true);
-    }
-
-    // Puesta al día de MyInvestor (agosto 2026): efectivo y fondos declarados a mano,
-    // porque su web no da un extracto con el valor actual. Se aplica una sola vez.
-    if (!(await getSetting('mi_update_2026_08'))) {
-        try {
-            await saveSetting('myinvestor_cash', 1353.82);
-            const declared = [
-                { match: /ISHARES US/i,    name: 'ISHARES US INDEX FUND IE S EUR',   invested: 780.25, value: 885.20 },
-                { match: /ISHARES EMERG/i, name: 'ISHARES EMERGING MARKETS INDEX',   invested: 420.00, value: 421.90 },
-                { match: /VANGUARD/i,      name: 'VANGUARD EUROPEAN STOCK EUR IN',   invested: 388.90, value: 417.63 },
-            ];
-            const existing = await getAllFunds();
-            for (const d of declared) {
-                const prev = existing.find(f => f.broker !== 'traderepublic' && d.match.test(f.name));
-                await saveFund({
-                    name: prev ? prev.name : d.name,
-                    purchases: prev ? (prev.purchases || []) : [],
-                    totalInvested: d.invested,
-                    currentValue: d.value,
-                    manualInvested: true,
-                });
-            }
-            await saveSetting('mi_update_2026_08', true);
-            console.log('MyInvestor actualizado con los datos declarados.');
-        } catch (err) {
-            console.error('MyInvestor update error:', err);
-        }
     }
 
     // Prellenar los campos de sincronización con lo guardado.

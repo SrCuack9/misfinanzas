@@ -7,7 +7,7 @@
     <link rel="manifest" href="manifest.json">
     <meta name="theme-color" content="#f3f5f9">
     <link rel="icon" type="image/svg+xml" href="icon.svg">
-    <link rel="stylesheet" href="styles.css?v=38">
+    <link rel="stylesheet" href="styles.css?v=40">
 </head>
 <body>
     <div id="app">
@@ -232,42 +232,20 @@
                         </div>
                         <button class="btn-secondary btn-small" style="margin-top:10px" onclick="toggleAccountClosed('savings')" id="close-savings">Marcar como cerrada</button>
                     </div>
-                    <div class="account-card">
+                    <div class="account-card account-card-wide">
                         <h3>Trade Republic</h3>
-                        <p class="account-detail">Cuenta remunerada (3% anual)</p>
+                        <p class="account-detail">Cuenta remunerada y fondos indexados</p>
                         <p class="account-balance" id="traderepublic-balance">0,00 €</p>
                         <p class="account-detail" id="traderepublic-detail"></p>
-                        <div class="savings-edit">
-                            <label>Actualizar saldo:</label>
-                            <input type="number" id="traderepublic-input" step="0.01" placeholder="Nuevo saldo">
-                            <button id="traderepublic-update-btn" class="btn-primary">Actualizar</button>
-                        </div>
-                    </div>
-                    <div class="account-card account-card-wide">
-                        <h3>MyInvestor</h3>
-                        <p class="account-balance" id="myinvestor-balance">0,00 €</p>
-                        <p class="account-detail" id="myinvestor-breakdown"></p>
-
-                        <div class="myinvestor-summary" id="myinvestor-summary"></div>
-
-                        <div class="mi-cash-edit">
-                            <label>Efectivo parado (sin invertir):</label>
-                            <input type="number" id="myinvestor-cash-input" step="0.01" placeholder="0,00">
-                            <button id="myinvestor-cash-btn" class="btn-primary">Guardar</button>
-                        </div>
-
-                        <h4 class="funds-title">Fondos indexados</h4>
-                        <div id="funds-list" class="funds-list"></div>
-
-                        <div class="fund-add">
-                            <h4>Añadir / actualizar fondo</h4>
-                            <div class="fund-add-row">
-                                <input type="text" id="fund-add-name" placeholder="Nombre del fondo">
-                                <input type="number" id="fund-add-invested" step="0.01" placeholder="Invertido €">
-                                <input type="number" id="fund-add-current" step="0.01" placeholder="Valor actual €">
-                                <button id="fund-add-btn" class="btn-primary">Guardar fondo</button>
+                        <div class="tr-funds" id="tr-funds"></div>
+                        <details class="manual-fix">
+                            <summary>Corregir el efectivo a mano</summary>
+                            <p class="sync-hint">Normalmente no hace falta: el efectivo se calcula solo con tus CSV de Trade Republic.</p>
+                            <div class="savings-edit">
+                                <input type="number" id="traderepublic-input" step="0.01" placeholder="Efectivo">
+                                <button id="traderepublic-update-btn" class="btn-secondary btn-small">Guardar</button>
                             </div>
-                        </div>
+                        </details>
                     </div>
                 </div>
                 <p class="closed-accounts-note" id="closed-accounts-note" hidden>
@@ -369,13 +347,13 @@
 
     <script src="lib/xlsx.full.min.js"></script>
     <script src="lib/chart.umd.min.js"></script>
-    <script src="js/categories.js?v=38"></script>
-    <script src="js/private.rules.js?v=38" onerror="console.log('Sin reglas privadas (modo público/móvil)')"></script>
-    <script src="js/crypto.js?v=38"></script>
-    <script src="js/db.js?v=38"></script>
-    <script src="js/parser.js?v=38"></script>
-    <script src="js/charts.js?v=38"></script>
-    <script src="js/app.js?v=38"></script>
+    <script src="js/categories.js?v=40"></script>
+    <script src="js/private.rules.js?v=40" onerror="console.log('Sin reglas privadas (modo público/móvil)')"></script>
+    <script src="js/crypto.js?v=40"></script>
+    <script src="js/db.js?v=40"></script>
+    <script src="js/parser.js?v=40"></script>
+    <script src="js/charts.js?v=40"></script>
+    <script src="js/app.js?v=40"></script>
     <script>
         if ('serviceWorker' in navigator) {
             navigator.serviceWorker.register('./sw.js');

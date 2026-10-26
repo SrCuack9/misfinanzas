@@ -363,83 +363,227 @@ function parseAbancaCSV(text) {
     return { transactions, abancaBalance: latestBalance, latestDate, accountNumber };
 }
 
-// --- Trade Republic: CSV con cabecera datetime,date,account_type,category,type,...
-// El saldo en efectivo no viene dado: se calcula sumando importes + retenciones.
-function parseTradeRepublicCSV(text) {
+// ==================== TRADE REPUBLIC ====================
+// El CSV de Trade Republic no trae saldo: el efectivo se calcula sumando
+// importes y retenciones de TODA la historia de la cuenta. Como cada fila tiene
+// un identificador único (transaction_id), se pueden unir varios CSV con rangos
+// de fechas distintos sin duplicar nada: da igual qué tramo se exporte.
+
+// Lee las filas de un CSV de Trade Republic como objetos.
+function readTradeRepublicRows(text) {
     const rows = parseCSVRows(text, ',');
-    if (!rows.length) return { transactions: [], traderepublicBalance: null, latestDate: null };
+    if (!rows.length) return [];
     const header = rows[0].map(h => h.trim().toLowerCase());
-    const idx = (name) => header.indexOf(name);
-    const iDate = idx('date'), iType = idx('type'), iName = idx('name'),
-          iAmount = idx('amount'), iTax = idx('tax'), iDesc = idx('description'),
-          iCategory = idx('category'), iSymbol = idx('symbol');
-
-    const transactions = [];
-    const funds = {};
-    let cash = 0, latestDate = null;
-
+    const out = [];
     for (let i = 1; i < rows.length; i++) {
         const r = rows[i];
         if (r.length < 3) continue;
-        const dateStr = parseDate(r[iDate]) || (r[iDate] || '').trim();
+        const o = {};
+        header.forEach((h, k) => { o[h] = (r[k] || '').trim(); });
+        // Clave única: el id de la operación; si faltara, una huella de la fila.
+        o._id = o.transaction_id || [o.datetime, o.type, o.amount, o.name, o.shares].join('|');
+        out.push(o);
+    }
+    return out;
+}
+
+// Pagos a comercios que el CSV registra como "transferencia" a tu propio
+// nombre (Bizum a una tienda, domiciliaciones SEPA): el comercio de verdad
+// está en la descripción, "... Debit transfer to VivaGym (NL65...)".
+const TR_MERCHANT_DEBIT = /(?:BIZUM|SEPA\s+DIRECT)\s+DEBIT\s+TRANSFER\s+TO\s+(.+?)(?:\s*\(|$)/i;
+
+// Decide qué es una fila de efectivo. Devuelve null si es un traspaso entre
+// cuentas propias (no es ingreso ni gasto).
+function classifyTradeRepublicRow(type, name, desc, amount) {
+    // 1) Pago a un comercio. Va ANTES del filtro de traspasos: en estas filas la
+    //    contraparte es tu propio nombre y se tomarían por un traspaso interno.
+    const m = desc.match(TR_MERCHANT_DEBIT);
+    if (m && amount < 0) {
+        const merchant = m[1].trim();
+        return { concept: merchant, ...categorize(merchant, amount) };
+    }
+    // 2) Traspaso entre cuentas propias
+    if (isInternalTransfer(name) || isInternalTransfer(desc)) return null;
+    // 3) Remuneración de la cuenta
+    if (type === 'INTEREST_PAYMENT') return { concept: 'Intereses Trade Republic', category: 'otros_ingresos', subcategory: 'Intereses' };
+    if (type === 'BENEFITS_SAVEBACK') return { concept: 'Saveback Trade Republic', category: 'otros_ingresos', subcategory: 'Saveback' };
+
+    const concept = name || desc || type;
+    // 4) Transferencia de o a una persona. Primero las reglas (alquiler, ayuda
+    //    familiar, ventas...); si ninguna encaja, es un Bizum entre personas.
+    //    La regla tiene que cuadrar con el sentido del dinero: un nombre que
+    //    casa con una regla de ingresos no puede convertir un pago en ingreso.
+    if (type.startsWith('TRANSFER')) {
+        for (const text of [concept, desc]) {
+            if (!text) continue;
+            const c = categorize(text, amount);
+            const fits = amount > 0 ? isIncomeCategory(c.category) : !isIncomeCategory(c.category);
+            if (c.subcategory !== 'Sin clasificar' && fits) return { concept, ...c };
+        }
+        return { concept, category: 'bizum',
+                 subcategory: amount > 0 ? 'Recibido (Trade Republic)' : 'Enviado (Trade Republic)' };
+    }
+    // 5) Tarjeta y demás
+    return { concept, ...categorize(concept, amount) };
+}
+
+// Convierte las filas (de uno o varios CSV) en movimientos, operaciones con
+// fondos y saldo en efectivo.
+function buildTradeRepublic(rows) {
+    // Sin duplicados y en orden cronológico (las posiciones lo necesitan).
+    const seen = new Set();
+    const uniq = rows.filter(r => !seen.has(r._id) && seen.add(r._id))
+                     .sort((a, b) => (a.datetime || a.date).localeCompare(b.datetime || b.date));
+
+    const transactions = [], trades = [];
+    let cash = 0, latestDate = null, firstDate = null;
+
+    for (const r of uniq) {
+        const dateStr = parseDate(r.date) || r.date;
         if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) continue;
         if (!latestDate || dateStr > latestDate) latestDate = dateStr;
+        if (!firstDate || dateStr < firstDate) firstDate = dateStr;
 
-        const type = (r[iType] || '').trim();
-        const amount = parseFloat(r[iAmount]) || 0;
-        const tax = parseFloat(r[iTax]) || 0;
-        // Todo movimiento afecta al efectivo de la cuenta (las compras de fondos salen del efectivo).
+        const type = r.type || '';
+        const amount = parseFloat(r.amount) || 0;
+        const tax = parseFloat(r.tax) || 0;
         cash += amount + tax;
 
-        const name = (r[iName] || '').trim();
-        const desc = (r[iDesc] || '').trim();
-
-        // Compras de fondos: no son gasto, es inversión. Se registran como fondo.
-        if (type === 'BUY' || (iCategory >= 0 && (r[iCategory] || '').trim() === 'TRADING')) {
-            const fundName = name || (r[iSymbol] || 'Fondo Trade Republic');
-            if (!funds[fundName]) funds[fundName] = { name: fundName, purchases: [], currentValue: null, broker: 'traderepublic' };
-            funds[fundName].purchases.push({
-                date: dateStr, amount: Math.abs(amount),
-                hash: txHash(dateStr, fundName + ' BUY', amount),
-            });
+        // Operaciones con fondos: inversión, no gasto.
+        if (r.category === 'TRADING' || type === 'BUY' || type === 'SELL') {
+            const shares = Math.abs(parseFloat(r.shares) || 0);
+            if (!r.symbol || !shares) continue;
+            let kind;
+            if (type === 'SELL') kind = 'sell';
+            else if (r.amount === '') kind = 'transfer_in';   // traspaso: llegan títulos, no sale dinero
+            else kind = 'buy';
+            trades.push({ date: dateStr, isin: r.symbol, name: r.name, kind, shares, amount: Math.abs(amount) });
             continue;
         }
 
-        let concept = name || desc || type;
-        if (type === 'INTEREST_PAYMENT') concept = 'Intereses Trade Republic';
-        if (type === 'BENEFITS_SAVEBACK') concept = 'Saveback Trade Republic';
-
         if (amount === 0) continue;
-        if (isInternalTransfer(concept) || isInternalTransfer(desc)) continue;
-
-        let category, subcategory;
-        if (type === 'INTEREST_PAYMENT' || type === 'BENEFITS_SAVEBACK') {
-            category = 'otros_ingresos';
-            subcategory = type === 'INTEREST_PAYMENT' ? 'Intereses' : 'Saveback';
-        } else if (type.startsWith('TRANSFER') && amount > 0) {
-            // Dinero recibido de otra persona: equivale a un Bizum recibido.
-            category = 'bizum';
-            subcategory = 'Recibido (Trade Republic)';
-        } else if (type.startsWith('TRANSFER') && amount < 0) {
-            category = 'bizum';
-            subcategory = 'Enviado (Trade Republic)';
-        } else {
-            ({ category, subcategory } = categorize(concept, amount));
-        }
-
+        const c = classifyTradeRepublicRow(type, r.name || '', r.description || '', amount);
+        if (!c) continue;
         transactions.push({
-            date: dateStr, concept, amount, category, subcategory,
+            date: dateStr, concept: c.concept, amount, category: c.category, subcategory: c.subcategory,
             source: 'traderepublic', month: dateStr.substring(0, 7),
-            hash: txHash(dateStr, concept, amount), manualCategory: false,
+            hash: txHash(dateStr, c.concept, amount), manualCategory: false,
         });
     }
+    return { transactions, trades, traderepublicBalance: Math.round(cash * 100) / 100, latestDate, firstDate };
+}
 
-    return {
-        transactions,
-        funds: Object.values(funds),
-        traderepublicBalance: Math.round(cash * 100) / 100,
-        latestDate,
-    };
+function parseTradeRepublicCSV(text) {
+    const rows = readTradeRepublicRows(text);
+    const r = buildTradeRepublic(rows);
+    r.rows = rows;   // para poder unirlo con otros CSV de la misma cuenta
+    return r;
+}
+
+// Posiciones en fondos a partir de las operaciones, con coste medio:
+//  - compra: suma títulos y coste
+//  - venta: resta títulos y la parte proporcional del coste
+//  - traspaso de entrada: suma títulos; su coste no viene en el CSV y se toma
+//    de transferCost[ISIN] (una sola vez por fondo) si se conoce.
+// Devuelve también los movimientos de dinero invertido, con fecha, para la
+// gráfica de patrimonio (el traspaso no es dinero nuevo y no cuenta ahí).
+function computeTRPositions(trades, transferCost) {
+    const pos = {};
+    const events = [];
+    const sorted = [...trades].sort((a, b) => a.date.localeCompare(b.date));
+    for (const t of sorted) {
+        const p = pos[t.isin] || (pos[t.isin] = { isin: t.isin, name: t.name, shares: 0, cost: 0,
+                                                    costKnown: true, transferApplied: false });
+        if (t.name) p.name = t.name;
+        if (t.kind === 'buy') {
+            p.shares += t.shares; p.cost += t.amount;
+            events.push({ date: t.date, amount: t.amount });
+        } else if (t.kind === 'transfer_in') {
+            p.shares += t.shares;
+            const c = transferCost ? transferCost[t.isin] : undefined;
+            if (c == null) p.costKnown = false;
+            else if (!p.transferApplied) { p.cost += c; p.transferApplied = true; }
+        } else if (t.kind === 'sell') {
+            const sold = Math.min(t.shares, p.shares);
+            const removed = p.shares > 0 ? p.cost * sold / p.shares : 0;
+            p.shares -= sold; p.cost -= removed;
+            events.push({ date: t.date, amount: -removed });
+        }
+    }
+    const positions = Object.values(pos)
+        .filter(p => p.shares > 1e-6)
+        .map(p => ({ isin: p.isin, name: p.name, shares: p.shares,
+                     cost: p.costKnown ? Math.round(p.cost * 100) / 100 : null,
+                     hasTransfer: p.transferApplied || !p.costKnown }));
+    return { positions, events };
+}
+
+// ==================== TRADE REPUBLIC — PDF de la cuenta de valores ====================
+// El texto de un PDF puede salir con las columnas mezcladas según quién lo
+// extraiga, así que no se lee por posición: cada fondo se empareja con el
+// precio y el valor que cumplen títulos × precio ≈ valor, y el resultado se
+// valida contra el total que imprime el propio PDF. Si no cuadra, se avisa en
+// vez de devolver números dudosos.
+
+function parseEsNumber(s) {
+    return parseFloat(String(s).replace(/\./g, '').replace(',', '.'));
+}
+
+function parseTRSecuritiesText(text) {
+    if (!text || !/CUENTA DE VALORES/i.test(text) || !/POSICIONES/i.test(text)) return null;
+
+    const dm = text.match(/\bal\s+(\d{2})\.(\d{2})\.(\d{4})/i) || text.match(/(\d{2})\.(\d{2})\.(\d{4})/);
+    const date = dm ? `${dm[3]}-${dm[2]}-${dm[1]}` : null;
+
+    // Fondos: "10,676867 tít. Nombre..." y su ISIN, en el mismo orden.
+    const holdings = [];
+    const qtyRe = /(\d{1,3}(?:\.\d{3})*,\d+)\s*t[ií]t\.?[ \t]*([^\n]*)/gi;
+    let m;
+    while ((m = qtyRe.exec(text)) !== null) {
+        const name = m[2].split(/\s{2,}|\s\d{1,3}(?:\.\d{3})*,\d{2}\b/)[0].trim();
+        holdings.push({ shares: parseEsNumber(m[1]), name });
+    }
+    const isins = [...text.matchAll(/ISIN:\s*([A-Z]{2}[A-Z0-9]{9}\d)/g)].map(x => x[1]);
+    if (!holdings.length || holdings.length !== isins.length) {
+        return { error: `El PDF tiene ${holdings.length} posiciones y ${isins.length} ISIN; no sé emparejarlos.` };
+    }
+    holdings.forEach((h, i) => { h.isin = isins[i]; });
+
+    // Total del extracto ("1.850,49 EUR").
+    const totals = [...text.matchAll(/(\d{1,3}(?:\.\d{3})*,\d{2})\s*EUR\b/g)].map(x => parseEsNumber(x[1]));
+    const total = totals.length ? totals[totals.length - 1] : null;
+
+    // Importes con dos decimales (precios y valores). Las fechas usan puntos
+    // y los títulos llevan más decimales, así que no se cuelan.
+    const nums = [...text.matchAll(/(?<![\d,.])(\d{1,3}(?:\.\d{3})*,\d{2})(?![\d,])/g)]
+        .map(x => parseEsNumber(x[1]));
+
+    // Emparejar: para cada fondo, el par (precio, valor) con menor error.
+    const cands = [];
+    holdings.forEach((h, hi) => {
+        const tol = h.shares * 0.005 + 0.02;   // el precio viene redondeado a 2 decimales
+        nums.forEach((price, pi) => nums.forEach((value, vi) => {
+            if (pi === vi || price <= 0) return;
+            const err = Math.abs(h.shares * price - value);
+            if (err <= tol) cands.push({ hi, pi, vi, err });
+        }));
+    });
+    cands.sort((a, b) => a.err - b.err);
+    const usedH = new Set(), usedN = new Set();
+    for (const c of cands) {
+        if (usedH.has(c.hi) || usedN.has(c.pi) || usedN.has(c.vi)) continue;
+        holdings[c.hi].price = nums[c.pi];
+        holdings[c.hi].value = nums[c.vi];
+        usedH.add(c.hi); usedN.add(c.pi); usedN.add(c.vi);
+    }
+    const missing = holdings.filter(h => h.value == null);
+    if (missing.length) return { error: `No encuentro el valor de: ${missing.map(h => h.isin).join(', ')}.` };
+
+    const sum = holdings.reduce((s, h) => s + h.value, 0);
+    if (total != null && Math.abs(sum - total) > 0.05) {
+        return { error: `Los valores suman ${sum.toFixed(2)} € y el PDF dice ${total.toFixed(2)} €.` };
+    }
+    return { date, positions: holdings, total: total != null ? total : Math.round(sum * 100) / 100 };
 }
 
 function parseCSVText(text) {
@@ -466,7 +610,16 @@ function parseFile(file, source) {
     });
 }
 
+function isPdfBuffer(arrayBuffer) {
+    const b = new Uint8Array(arrayBuffer, 0, Math.min(5, arrayBuffer.byteLength));
+    return String.fromCharCode(...b) === '%PDF-';
+}
+
 function parseArrayBuffer(arrayBuffer, source) {
+    // Los PDF los lee el servidor del ordenador (pypdf), no el navegador.
+    if (isPdfBuffer(arrayBuffer)) {
+        throw new Error('Los PDF de Trade Republic se leen desde la carpeta de extractos del ordenador, no con la subida manual.');
+    }
     // Primero: ¿es un CSV que conocemos (Abanca / Trade Republic)?
     const csvResult = tryParseCSVBuffer(arrayBuffer);
     if (csvResult) return csvResult;
@@ -530,6 +683,7 @@ function extractBalancesOnly(arrayBuffer) {
                 abancaBalance: csv.abancaBalance !== undefined ? csv.abancaBalance : null,
                 traderepublicBalance: csv.traderepublicBalance !== undefined ? csv.traderepublicBalance : null,
                 latestDate: csv.latestDate || null,
+                trRows: csv.rows || null,   // filas de TR, para unir varios CSV
             };
         }
 

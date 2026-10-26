@@ -23,6 +23,9 @@ SYNC_DIR = os.environ.get('MISFINANZAS_SYNC_DIR', os.path.join(BASE_DIR, 'sync')
 SYNC_CONFIG = os.path.join(BASE_DIR, 'sync_config.json')
 
 VALID_EXTENSIONS = {'.xls', '.xlsx', '.csv'}
+# Los PDF (cuenta de valores de Trade Republic) se listan, pero no se sirven
+# tal cual: el servidor extrae su texto y es la app la que lo interpreta.
+PDF_EXTENSIONS = {'.pdf'}
 
 
 def _github_token():
@@ -99,6 +102,8 @@ class MisFinanzasHandler(http.server.SimpleHTTPRequestHandler):
             self.send_file_list()
         elif self.path.startswith('/api/extracto/'):
             self.send_extracto_file()
+        elif self.path.startswith('/api/pdftext/'):
+            self.send_pdf_text()
         else:
             super().do_GET()
 
@@ -133,7 +138,7 @@ class MisFinanzasHandler(http.server.SimpleHTTPRequestHandler):
         if os.path.isdir(EXTRACTOS_DIR):
             for name in os.listdir(EXTRACTOS_DIR):
                 ext = os.path.splitext(name)[1].lower()
-                if ext in VALID_EXTENSIONS:
+                if ext in VALID_EXTENSIONS or ext in PDF_EXTENSIONS:
                     full_path = os.path.join(EXTRACTOS_DIR, name)
                     stat = os.stat(full_path)
                     files.append({
@@ -143,6 +148,27 @@ class MisFinanzasHandler(http.server.SimpleHTTPRequestHandler):
                     })
         files.sort(key=lambda f: f['modified'], reverse=True)
         self.send_json(200, files)
+
+    def send_pdf_text(self):
+        """Devuelve el texto de un PDF de la carpeta de extractos."""
+        filename = os.path.basename(urllib.parse.unquote(self.path.split('/api/pdftext/', 1)[1]))
+        filepath = os.path.join(EXTRACTOS_DIR, filename)
+        if os.path.splitext(filename)[1].lower() not in PDF_EXTENSIONS or not os.path.isfile(filepath):
+            self.send_json(404, {'error': 'PDF no encontrado'})
+            return
+        try:
+            import pypdf
+        except ImportError:
+            # Sin pypdf (p. ej. el Python embebido del ordenador del trabajo) no
+            # se rompe nada: la app solo avisa de que no puede leer el PDF.
+            self.send_json(200, {'error': 'Falta la libreria pypdf en este ordenador (pip install pypdf).'})
+            return
+        try:
+            reader = pypdf.PdfReader(filepath)
+            text = '\n'.join((page.extract_text() or '') for page in reader.pages)
+            self.send_json(200, {'text': text})
+        except Exception as e:
+            self.send_json(200, {'error': f'No se pudo leer el PDF: {e}'})
 
     def send_extracto_file(self):
         filename = self.path.split('/api/extracto/', 1)[1]

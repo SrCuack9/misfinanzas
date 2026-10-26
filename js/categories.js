@@ -458,8 +458,20 @@ function deleteCustomCategory(id) {
     return true;
 }
 
+// Quita tildes y diéresis para que las reglas (escritas sin acentos) casen con
+// textos que sí los traen: "José Martínez" debe dar igual que "JOSE
+// MARTINEZ". Cada banco escribe los nombres a su manera.
+function normalizeText(s) {
+    return String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '');
+}
+
+// Una regla casa si casa con el texto original o con el texto sin tildes.
+function matchesPattern(pattern, text) {
+    return pattern.test(text) || pattern.test(normalizeText(text));
+}
+
 function isInternalTransfer(concept) {
-    return INTERNAL_PATTERNS.some(p => p.test(concept));
+    return INTERNAL_PATTERNS.some(p => matchesPattern(p, concept));
 }
 
 function conceptKey(concept) {
@@ -498,7 +510,7 @@ function categorize(concept, amount) {
     }
 
     for (const rule of CATEGORY_RULES) {
-        if (rule.pattern.test(concept)) {
+        if (matchesPattern(rule.pattern, concept)) {
             return { category: rule.category, subcategory: rule.subcategory };
         }
     }
